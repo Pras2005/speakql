@@ -1,3 +1,4 @@
+alembic
 annotated-types
 anyio
 bcrypt
@@ -23,6 +24,8 @@ h11
 httplib2
 httptools
 idna
+Mako
+MarkupSafe
 passlib
 proto-plus
 protobuf
