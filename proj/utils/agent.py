@@ -64,32 +64,35 @@ class DatabaseAgent:
             return {"error": str(e)}
 
     def _gather_database_structure(self) -> Dict[str, Any]:
-        """Directly gather database structure information without relying on AI"""
-        db_structure = {}
-        
-        # Get all schemas
-        schemas = self.tools.list_schemas()
-        db_structure["schemas"] = schemas
-        
-        # Focus on public schema as default
-        schema = "public"
-        if schema in schemas:
-            tables = self.tools.list_tables(schema=schema)
-            db_structure["tables"] = {}
-            
-            
-            for table in tables:
-                table_info = self.tools.describe_table(table_name=table, schema=schema)
-                preview = self.tools.preview_data(table_name=table, schema=schema, limit=3)
-                row_count = self.tools.count_rows_in_table(table_name=table, schema=schema)
-                db_structure["tables"][table] = {
-                    "structure": table_info,
-                    "sample_data": preview,
-                    "row_count": row_count
-                }
-                
-        return db_structure
+        """Comprehensively gather database structure for all schemas and their tables."""
+        db_structure = {
+        "schemas": [],
+        "tables": {}
+        }
 
+    # Get all schemas and their tables
+        schema_table_map = self.tools.list_schemas_and_tables()
+        db_structure["schemas"] = list(schema_table_map.keys())
+
+        for schema, tables in schema_table_map.items():
+            for table in tables:
+                try:
+                    table_info = self.tools.describe_table(table_name=table, schema=schema)
+                    preview = self.tools.preview_data(table_name=table, schema=schema, limit=3)
+                    row_count = self.tools.count_rows_in_table(table_name=table, schema=schema)
+
+                    db_structure["tables"][f"{schema}.{table}"] = {
+                        "structure": table_info,
+                        "sample_data": preview,
+                        "row_count": row_count
+                    }
+                except Exception as e:
+                    db_structure["tables"][f"{schema}.{table}"] = {
+                        "error": str(e)
+                    }
+
+        return db_structure
+ 
     def process_request(self, prompt: str) -> str:
         """Two-phase approach: first gather schema info, then generate SQL"""
         try:
@@ -108,7 +111,8 @@ class DatabaseAgent:
             
             Generate the most appropriate PostgreSQL query based on the actual database structure above.
             Return ONLY the SQL code, no explanations or markdown.
-            The SQL should be valid for PostgreSQL and match the exact column names and table structure shown above take row counts into consideration for insert queries."""
+            The SQL should be valid for PostgreSQL and match the exact column names and table structure shown above take row counts into consideration for insert queries.
+            check first in which shcmea the table exist and then generate query."""
             
             if self.debug:
                 print(f"Sending final prompt to AI...")

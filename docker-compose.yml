@@ -1,25 +1,27 @@
 version: "3.8"
 
 services:
-  frontend:
-    build:
-      context: .
-      dockerfile: client/Dockerfile
-    volumes:
-      - ./client:/app
-    ports:
-      - "5173:5173"  # Vite default port for development
-    depends_on:
-      - backend
-
   backend:
     build:
-      context: .
-      dockerfile: proj/Dockerfile
-    volumes:
-      - ./proj:/app
+      context: ./proj  # Path to the backend directory
+      dockerfile: Dockerfile
     ports:
-      - "8000:8000"  # FastAPI default port for development
+      - "8000:8000"
+    volumes:
+      - ./proj:/app  # Mount the backend code for easy development
     environment:
-      - PYTHONUNBUFFERED=1
+      - ENV_VAR=value  # Add any necessary environment variables for the backend
+
+  frontend:
+    build:
+      context: ./client  # Path to the frontend directory
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./client:/app  # Mount the frontend code for easy development
+    environment:
+      - ENV_VAR=value  # Add any necessary environment variables for the frontend
+    depends_on:
+      - backend  # Ensure backend is ready before starting frontend
 

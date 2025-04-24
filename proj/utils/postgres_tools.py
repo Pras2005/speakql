@@ -46,7 +46,27 @@ class PostgreSQLTools:
             "foreign_keys": fks,
             "indexes": indexes
         }
-
+    def list_schemas_and_tables(self) -> Dict[str, List[str]]:
+        """Return a dictionary of schemas and the tables they contain."""
+        with self.engine.connect() as conn:
+            try:
+                result = conn.execute(text("""
+                SELECT table_schema, table_name
+                FROM information_schema.tables
+                WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
+                ORDER BY table_schema, table_name;
+                """))
+                schema_table_map = {}
+                for row in result:
+                    schema = row._mapping["table_schema"]
+                    table = row._mapping["table_name"]
+                    if schema not in schema_table_map:
+                        schema_table_map[schema] = []
+                    schema_table_map[schema].append(table)
+                return schema_table_map
+            except Exception as e:
+                print({"error": str(e)})
+                return {"error": str(e)}
     def _get_column_metadata(self, table: str, schema: str, column: str) -> Dict[str, Any]:
         """Get additional column metadata like comments"""
         with self.engine.connect() as conn:
@@ -89,7 +109,9 @@ class PostgreSQLTools:
                     return [dict(row._mapping) for row in result]
                 return {"status": "success", "rows_affected": result.rowcount}
             except Exception as e:
+                print({"error":str(e)})
                 return {"error": str(e)}
+
 
 
 def get_postgresql_tools(user_db):

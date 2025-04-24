@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "build": "tsc -b --skipLibCheck && vite build --emptyOutDir",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
@@ -48,3 +49,4 @@
     "vite": "^6.2.0"
   }
 }
+
