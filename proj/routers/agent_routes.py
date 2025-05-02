@@ -3,11 +3,12 @@ from sqlalchemy.orm import Session
 from models.user_model import User
 from schemas.agent_schemas import GenerateSQLRequest, GenerateSQLResponse, ExecuteSQLRequest, ExecuteSQLResponse
 from crud.db_crud import get_user_databases,add_query_history
-
+from utils.utils import run_with_timeout
 from utils.agent import DatabaseAgent  
 from auth.auth_bearer import JWTBearer
 from database import get_session
 from utils.visualizer import get_db_structure_json
+import asyncio
 router = APIRouter()
 
 @router.post("/generate-sql", response_model=GenerateSQLResponse)
@@ -23,7 +24,8 @@ async def generate_sql(request: GenerateSQLRequest, session: Session = Depends(g
     
 
     agent = DatabaseAgent(user_db=user_db,debug=True)
-    sql = agent.process_request(request.prompt)
+    sql =await run_with_timeout(agent.process_request,request.prompt,timeout_seconds=15)
+
     
     if not sql:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to generate SQL")
@@ -43,7 +45,8 @@ async def execute_sql(request: ExecuteSQLRequest, session: Session = Depends(get
 
     agent = DatabaseAgent(user_db=user_db,debug=True)
     
-    execution_result = agent.tools.execute_query(request.raw_sql)
+    execution_result = await run_with_timeout(agent.tools.execute_query, request.raw_sql, timeout_seconds=15)
+
     
     if "error" in execution_result:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=execution_result["error"])

@@ -9,7 +9,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { motion } from 'framer-motion';
 import axios from 'axios';
 import { API_URL } from '@/constants';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -22,13 +21,6 @@ import {
   Edit2, 
   Save, 
   Database, 
-  ChevronDown, 
-  ChevronUp, 
-  Maximize2, 
-  Minimize2,
-  MessageSquare,
-  Plus,
-  Trash2,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -36,7 +28,9 @@ import {
   GripVertical,
   Send,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  Trash2,
+  Layers
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -126,15 +120,33 @@ type QueryHistoryItem = {
   executed_at: string;
 };
 
-type ConversationType = {
-  id: string;
-  title: string;
-  prompts: string[];
-  responses: QueryResponse[];
-  timestamp: string;
+// Create a custom axios instance with auth token handling
+const createAxiosInstance = () => {
+  const token = localStorage.getItem('token');
+  
+  const instance = axios.create({
+    baseURL: API_URL,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    }
+  });
+  
+  // Add response interceptor to handle token expiration
+  instance.interceptors.response.use(
+    response => response,
+    error => {
+      if (error.response && error.response.status === 401) {
+        // Handle token expiration - redirect to login
+        localStorage.removeItem('token');
+        window.location.href = '/login';
+      }
+      return Promise.reject(error);
+    }
+  );
+  
+  return instance;
 };
-
-const token = localStorage.getItem('token');
 
 export default function ChatbotPage() {
   // State for current chat
@@ -157,44 +169,43 @@ export default function ChatbotPage() {
   
   // History and UI states
   const [queryHistory, setQueryHistory] = useState<QueryHistoryItem[]>([]);
-  const [conversations, setConversations] = useState<ConversationType[]>([]);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [isEditingSql, setIsEditingSql] = useState(false);
   const [editedSql, setEditedSql] = useState('');
   const [editingSqlIndex, setEditingSqlIndex] = useState<number | null>(null);
-  const [isChatExpanded, setIsChatExpanded] = useState(true);
-  const [chatHeight, setChatHeight] = useState('500px');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
-  const [viewMode, setViewMode] = useState<'chat' | 'history'>('chat');
   
   // Pagination for query history
   const [historyPage, setHistoryPage] = useState(0);
   const HISTORY_ITEMS_PER_PAGE = 10;
   
   // New state for resizable sidebar
-  const [sidebarWidth, setSidebarWidth] = useState(256); // Default width in pixels
+  const [sidebarWidth, setSidebarWidth] = useState(280); // Default width in pixels
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const resizerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  
+  // Add state for active tab
+  const [activeTab, setActiveTab] = useState('main');
+  
+  // Add state for auth refresh
+  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('token'));
+  const [authRefreshInterval, setAuthRefreshInterval] = useState<NodeJS.Timeout | null>(null);
 
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { requestLogout } = useAuth();
   const navigate = useNavigate();
+  
+  // Create axios instance
+  const api = createAxiosInstance();
 
   // Function to scroll to bottom
   const scrollToBottom = () => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  };
-
-  const toggleChatSize = () => {
-    setIsChatExpanded(!isChatExpanded);
-    setChatHeight(isChatExpanded ? '500px' : '80vh');
   };
 
   // Handle sidebar resizing
@@ -253,83 +264,13 @@ export default function ChatbotPage() {
     autoResizeTextarea();
   }, [input]);
 
-  // Generate a unique ID for new conversations
-  const generateId = () => {
-    return Date.now().toString(36) + Math.random().toString(36).substring(2);
-  };
-
-  // Create a new conversation
-  const createNewConversation = () => {
-    const newId = generateId();
-    const newConversation = {
-      id: newId,
-      title: 'New Conversation',
-      prompts: [],
-      responses: [],
-      timestamp: new Date().toISOString(),
-    };
-    
-    setConversations([newConversation, ...conversations]);
-    setActiveConversationId(newId);
-    setPrompts([]);
-    setResponses([]);
-    setRawSQL('');
-  };
-
-  // Load a conversation from history
-  const loadConversation = (id: string) => {
-    const conversation = conversations.find(c => c.id === id);
-    if (conversation) {
-      setActiveConversationId(id);
-      setPrompts(conversation.prompts);
-      setResponses(conversation.responses);
-      setRawSQL('');
-      setIsEditingSql(false);
-      setEditingSqlIndex(null);
-      setEditedSql('');
-    }
-  };
-
-  // Delete a conversation
-  const deleteConversation = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (window.confirm('Are you sure you want to delete this conversation?')) {
-      const updatedConversations = conversations.filter(c => c.id !== id);
-      setConversations(updatedConversations);
-      
-      if (activeConversationId === id) {
-        if (updatedConversations.length > 0) {
-          loadConversation(updatedConversations[0].id);
-        } else {
-          createNewConversation();
-        }
-      }
-    }
-  };
-
-  // Update conversation title based on first prompt
-  const updateConversationTitle = (id: string, prompt: string) => {
-    setConversations(prevConversations => 
-      prevConversations.map(conv => 
-        conv.id === id 
-          ? { 
-              ...conv, 
-              title: prompt.length > 30 ? prompt.substring(0, 30) + '...' : prompt 
-            } 
-          : conv
-      )
-    );
-  };
-
   // Fetch query history for a specific database
   const fetchQueryHistory = async (dbId: number) => {
     if (!dbId) return;
     
     try {
       setIsHistoryLoading(true);
-      const res = await axios.get(`${API_URL}/query-history/${dbId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await api.get(`/query-history/${dbId}`);
       setQueryHistory(res.data);
       setHistoryPage(0); // Reset to first page when fetching new history
     } catch (error) {
@@ -362,9 +303,7 @@ export default function ChatbotPage() {
   const requestDeleteDatabase = async (id: number) => {
     try {
       setLoading(true);
-      await axios.delete(`${API_URL}/databases/${id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      await api.delete(`/databases/${id}`);
       await requestGetDatabases();
     } catch (error) {
       console.error(error);
@@ -376,11 +315,7 @@ export default function ChatbotPage() {
   const requestGetDatabases = async () => {
     try {
       setLoading(true);
-      const res = await axios.get(`${API_URL}/get_databases`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const res = await api.get(`/get_databases`);
       setDatabases(res.data);
     } catch (error) {
       console.error(error);
@@ -392,11 +327,7 @@ export default function ChatbotPage() {
   const requestAddDatabase = async () => {
     try {
       setLoading(true);
-      await axios.post(`${API_URL}/databases`, dbConfig, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      await api.post(`/databases`, dbConfig);
       await requestGetDatabases();
     } catch (error) {
       console.error(error);
@@ -428,26 +359,16 @@ export default function ChatbotPage() {
       if (!textToSend.trim()) return;
       setLoading(true);
       
-      // Create a new conversation if none is active
-      if (!activeConversationId) {
-        createNewConversation();
-      }
-      
       // Update local state
       const newPrompts = [...prompts, textToSend];
       setPrompts(newPrompts);
 
-      const res = await axios.post(
-        `${API_URL}/agent/generate-sql`,
+      const res = await api.post(
+        `/agent/generate-sql`,
         {
           prompt: textToSend,
           db_id: selectedDbId,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
+        }
       );
 
       setRawSQL(res.data.raw_sql);
@@ -460,29 +381,15 @@ export default function ChatbotPage() {
       const newResponses = [...responses, response];
       setResponses(newResponses);
       
-      // Update conversation in state
-      setConversations(prevConversations => 
-        prevConversations.map(conv => 
-          conv.id === activeConversationId 
-            ? { 
-                ...conv, 
-                prompts: newPrompts, 
-                responses: newResponses,
-                timestamp: new Date().toISOString()
-              } 
-            : conv
-        )
-      );
+      // Refresh query history
+      fetchQueryHistory(selectedDbId);
       
-      // Update conversation title if this is the first message
-      if (prompts.length === 0 && activeConversationId) {
-        updateConversationTitle(activeConversationId, textToSend);
-      }
-
-      // Refresh query history if we're in history view
-      if (viewMode === 'history') {
-        fetchQueryHistory(selectedDbId);
-      }
+      // Save current conversation to sessionStorage
+      sessionStorage.setItem('currentConversation', JSON.stringify({
+        prompts: newPrompts,
+        responses: newResponses,
+        rawSQL: res.data.raw_sql
+      }));
     } catch (error) {
       console.error(error);
     } finally {
@@ -496,25 +403,15 @@ export default function ChatbotPage() {
     try {
       setLoading(true);
       
-      // Create a new conversation if none is active
-      if (!activeConversationId) {
-        createNewConversation();
-      }
-      
       const newPrompts = [...prompts, 'Execute SQL'];
       setPrompts(newPrompts);
 
-      const res = await axios.post(
-        `${API_URL}/agent/execute-sql`,
+      const res = await api.post(
+        `/agent/execute-sql`,
         {
           raw_sql: sql || rawSQL,
           db_id: selectedDbId,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
+        }
       );
 
       // Create a successful response object with the query results
@@ -530,25 +427,16 @@ export default function ChatbotPage() {
 
       const newResponses = [...responses, successResponse];
       setResponses(newResponses);
-      
-      // Update conversation in state
-      setConversations(prevConversations => 
-        prevConversations.map(conv => 
-          conv.id === activeConversationId 
-            ? { 
-                ...conv, 
-                prompts: newPrompts, 
-                responses: newResponses,
-                timestamp: new Date().toISOString()
-              } 
-            : conv
-        )
-      );
 
-      // Refresh query history if we're in history view
-      if (viewMode === 'history') {
-        fetchQueryHistory(selectedDbId);
-      }
+      // Refresh query history
+      fetchQueryHistory(selectedDbId);
+      
+      // Save current conversation to sessionStorage
+      sessionStorage.setItem('currentConversation', JSON.stringify({
+        prompts: newPrompts,
+        responses: newResponses,
+        rawSQL: ''
+      }));
     } catch (error) {
       console.error(error);
       // Handle failed execution
@@ -565,19 +453,12 @@ export default function ChatbotPage() {
       const newResponses = [...responses, errorResponse];
       setResponses(newResponses);
       
-      // Update conversation in state
-      setConversations(prevConversations => 
-        prevConversations.map(conv => 
-          conv.id === activeConversationId 
-            ? { 
-                ...conv, 
-                prompts: [...prompts, 'Execute SQL'], 
-                responses: newResponses,
-                timestamp: new Date().toISOString()
-              } 
-            : conv
-        )
-      );
+      // Save current conversation to sessionStorage
+      sessionStorage.setItem('currentConversation', JSON.stringify({
+        prompts: [...prompts, 'Execute SQL'],
+        responses: newResponses,
+        rawSQL: ''
+      }));
     } finally {
       setRawSQL('');
       setIsEditingSql(false);
@@ -610,17 +491,6 @@ export default function ChatbotPage() {
         raw_sql: editedSql,
       };
       setResponses(updatedResponses);
-      
-      // Update conversation in state
-      if (activeConversationId) {
-        setConversations(prevConversations => 
-          prevConversations.map(conv => 
-            conv.id === activeConversationId 
-              ? { ...conv, responses: updatedResponses } 
-              : conv
-          )
-        );
-      }
     }
 
     // Update rawSQL if this is the last SQL being edited
@@ -632,6 +502,13 @@ export default function ChatbotPage() {
     setIsEditingSql(false);
     setEditingSqlIndex(null);
     setEditedSql('');
+    
+    // Save current conversation to sessionStorage
+    sessionStorage.setItem('currentConversation', JSON.stringify({
+      prompts,
+      responses: updatedResponses,
+      rawSQL: index === responses.length - 1 ? editedSql : rawSQL
+    }));
   };
 
   const exportResultsAsCSV = (result: any[]) => {
@@ -668,29 +545,8 @@ export default function ChatbotPage() {
       setEditingSqlIndex(null);
       setEditedSql('');
       
-      // Update conversation in state if active
-      if (activeConversationId) {
-        setConversations(prevConversations => 
-          prevConversations.map(conv => 
-            conv.id === activeConversationId 
-              ? { 
-                  ...conv, 
-                  prompts: [], 
-                  responses: [],
-                  timestamp: new Date().toISOString()
-                } 
-              : conv
-          )
-        );
-      }
-    }
-  };
-
-  // Toggle between chat and history views
-  const toggleViewMode = (mode: 'chat' | 'history') => {
-    setViewMode(mode);
-    if (mode === 'history' && selectedDbId) {
-      fetchQueryHistory(selectedDbId);
+      // Clear conversation from sessionStorage
+      sessionStorage.removeItem('currentConversation');
     }
   };
 
@@ -758,17 +614,88 @@ export default function ChatbotPage() {
       return dateString;
     }
   };
-
-  // Initialize with a new conversation if none exists
+  
+  // Setup authentication refresh mechanism
   useEffect(() => {
-    if (conversations.length === 0) {
-      createNewConversation();
-    } else if (!activeConversationId) {
-      setActiveConversationId(conversations[0].id);
-      setPrompts(conversations[0].prompts);
-      setResponses(conversations[0].responses);
+    const checkAndRefreshAuth = () => {
+      const token = localStorage.getItem('token');
+      if (token) {
+        setIsAuthenticated(true);
+        // Refresh data after authentication is confirmed
+        requestGetDatabases();
+      } else {
+        setIsAuthenticated(false);
+        // Redirect to login if no token
+        navigate('/login');
+      }
+    };
+    
+    // Check auth status immediately
+    checkAndRefreshAuth();
+    
+    // Set up interval to periodically check auth status (optional)
+    const interval = setInterval(checkAndRefreshAuth, 5 * 60 * 1000); // Every 5 minutes
+    setAuthRefreshInterval(interval);
+    
+    return () => {
+      if (authRefreshInterval) {
+        clearInterval(authRefreshInterval);
+      }
+    };
+  }, []);
+  
+  // Add an effect to persist user data in sessionStorage
+  useEffect(() => {
+    if (databases.length > 0) {
+      sessionStorage.setItem('userDatabases', JSON.stringify(databases));
     }
-  }, [conversations]);
+    
+    // Save selected database ID
+    if (selectedDbId) {
+      sessionStorage.setItem('selectedDbId', selectedDbId.toString());
+    }
+    
+    // Save active tab
+    sessionStorage.setItem('activeTab', activeTab);
+  }, [databases, selectedDbId, activeTab]);
+  
+  // Load persisted data on mount
+  useEffect(() => {
+    const savedDatabases = sessionStorage.getItem('userDatabases');
+    if (savedDatabases) {
+      try {
+        setDatabases(JSON.parse(savedDatabases));
+      } catch (e) {
+        console.error('Error parsing saved databases', e);
+      }
+    }
+    
+    const savedDbId = sessionStorage.getItem('selectedDbId');
+    if (savedDbId) {
+      try {
+        setSelectedDbId(parseInt(savedDbId, 10));
+      } catch (e) {
+        console.error('Error parsing saved database ID', e);
+      }
+    }
+    
+    const savedConversation = sessionStorage.getItem('currentConversation');
+    if (savedConversation) {
+      try {
+        const { prompts, responses, rawSQL } = JSON.parse(savedConversation);
+        setPrompts(prompts || []);
+        setResponses(responses || []);
+        setRawSQL(rawSQL || '');
+      } catch (e) {
+        console.error('Error parsing saved conversation', e);
+      }
+    }
+    
+    const savedTab = sessionStorage.getItem('activeTab');
+    if (savedTab) {
+      setActiveTab(savedTab);
+    }
+  }, []);
 
   useEffect(() => {
     scrollToBottom();
@@ -776,21 +703,17 @@ export default function ChatbotPage() {
 
   // Fetch databases on component mount
   useEffect(() => {
-    requestGetDatabases();
-    
-    // Load conversations from localStorage or backend in a real app
-    // For this example, we'll just create a sample conversation
-    if (conversations.length === 0) {
-      createNewConversation();
+    if (isAuthenticated) {
+      requestGetDatabases();
     }
-  }, []);
+  }, [isAuthenticated]);
 
-  // Fetch query history when selectedDbId changes and we're in history view
+  // Fetch query history when selectedDbId changes
   useEffect(() => {
-    if (selectedDbId && viewMode === 'history') {
+    if (selectedDbId) {
       fetchQueryHistory(selectedDbId);
     }
-  }, [selectedDbId, viewMode]);
+  }, [selectedDbId]);
 
   return (
     <>
@@ -817,155 +740,145 @@ export default function ChatbotPage() {
               </div>
             </div>
             
+            {/* Tab navigation */}
             <div className="flex border-b border-gray-700">
               <button
-                className={`flex-1 p-3 text-center ${viewMode === 'chat' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-700'}`}
-                onClick={() => toggleViewMode('chat')}
+                className={`flex-1 py-2 px-4 text-sm font-medium flex items-center justify-center ${
+                  activeTab === 'main' 
+                    ? 'text-indigo-300 border-b-2 border-indigo-500' 
+                    : 'text-gray-400 hover:text-gray-300'
+                }`}
+                onClick={() => setActiveTab('main')}
               >
-                <MessageSquare size={16} className="inline-block mr-2" />
-                Chat
+                <Layers size={14} className="mr-2" /> Main
               </button>
               <button
-                className={`flex-1 p-3 text-center ${viewMode === 'history' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-700'}`}
-                onClick={() => toggleViewMode('history')}
+                className={`flex-1 py-2 px-4 text-sm font-medium flex items-center justify-center ${
+                  activeTab === 'history' 
+                    ? 'text-indigo-300 border-b-2 border-indigo-500' 
+                    : 'text-gray-400 hover:text-gray-300'
+                }`}
+                onClick={() => setActiveTab('history')}
               >
-                <Clock size={16} className="inline-block mr-2" />
-                History
+                <Clock size={14} className="mr-2" /> History
               </button>
             </div>
             
-            {viewMode === 'chat' ? (
-              <>
-                <div className="p-3 border-b border-gray-700">
-                  <Button 
-                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
-                    onClick={createNewConversation}
-                  >
-                    <Plus size={16} className="mr-2" />
-                    New Chat
-                  </Button>
-                </div>
+            {/* Sidebar content based on active tab */}
+            {activeTab === 'main' ? (
+              <div className="flex-1 overflow-y-auto p-2">
+                {/* Main sidebar content */}
+                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2 px-2">
+                  Databases
+                </h3>
                 
-                <div className="flex-1 overflow-y-auto p-2">
-                  {conversations.map((conv) => (
-                    <div
-                      key={conv.id}
-                      onClick={() => loadConversation(conv.id)}
-                      className={`flex justify-between items-center p-3 mb-1 rounded-lg cursor-pointer transition-colors ${
-                        activeConversationId === conv.id 
-                          ? 'bg-gray-700 text-white' 
-                          : 'text-gray-300 hover:bg-gray-700'
+                {/* Display list of databases */}
+                <div className="space-y-2">
+                  {databases.map((db) => (
+                    <div 
+                      key={db.id}
+                      className={`p-3 rounded-lg cursor-pointer ${
+                        selectedDbId === db.id ? 'bg-indigo-900 bg-opacity-50' : 'bg-gray-700 hover:bg-gray-650'
                       }`}
+                      onClick={() => setSelectedDbId(db.id)}
                     >
-                      <div className="flex-1 min-w-0">
-                        <div className="truncate font-medium">
-                          {conv.title || 'New Conversation'}
-                        </div>
-                        <div className="text-xs text-gray-400 truncate">
-                          {formatDate(conv.timestamp)}
-                        </div>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 rounded-full text-gray-400 hover:text-gray-200 hover:bg-gray-600"
-                        onClick={(e) => deleteConversation(conv.id, e)}
-                      >
-                        <Trash2 size={14} />
-                      </Button>
+                      <div className="font-medium text-gray-200">{db.db_name}</div>
+                      <div className="text-xs text-gray-400">{db.host}:{db.port}</div>
                     </div>
                   ))}
                 </div>
-                
-                <div className="p-3 border-t border-gray-700">
-                  <Button 
-                    className="w-full bg-gray-700 hover:bg-gray-600 text-gray-300"
-                    onClick={clearConversation}
-                  >
-                    <RefreshCw size={16} className="mr-2" />
-                    Clear Current Chat
-                  </Button>
-                </div>
-              </>
+              </div>
             ) : (
-              <div className="flex flex-col h-full">
-                <div className="flex-1 overflow-y-auto p-2">
-                  <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2 px-2">
-                    Query History
-                  </h3>
-                  
-                  {isHistoryLoading ? (
-                    <div className="flex justify-center items-center h-32">
-                      <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
-                    </div>
-                  ) : getPaginatedHistory().length === 0 ? (
-                    <div className="text-center text-gray-400 py-8">
-                      <p>No query history found</p>
-                      {!selectedDbId && <p className="text-sm mt-2">Select a database to view history</p>}
-                    </div>
-                  ) : (
-                    getPaginatedHistory().map((item) => (
-                      <div
-                        key={item.id}
-                        className="p-3 mb-2 bg-gray-700 rounded-lg"
-                      >
-                        <div className="mb-2">
-                          <SyntaxHighlighter
-                            language="sql"
-                            style={oneDark}
-                            customStyle={{
-                              padding: '0.75rem',
-                              borderRadius: '0.5rem',
-                              fontSize: '0.75rem',
-                              lineHeight: '1.4',
-                              maxHeight: '150px',
-                              overflow: 'auto'
-                            }}
-                          >
-                            {item.generated_sql}
-                          </SyntaxHighlighter>
-                        </div>
-                        <div className="flex justify-between items-center text-xs">
-                          <span className={`px-2 py-1 rounded-full ${item.success ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}`}>
-                            {item.success ? 'Success' : 'Failed'}
-                          </span>
-                          <span className="text-gray-400">{formatDate(item.executed_at)}</span>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
+              <div className="flex-1 overflow-y-auto p-2">
+                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2 px-2 flex items-center">
+                  <Clock size={14} className="mr-2" /> Query History
+                </h3>
                 
-                {/* Pagination controls */}
-                {queryHistory.length > HISTORY_ITEMS_PER_PAGE && (
-                  <div className="p-3 border-t border-gray-700 flex justify-between items-center">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-gray-300 border-gray-600 hover:bg-gray-700"
-                      onClick={goToPreviousHistoryPage}
-                      disabled={historyPage === 0}
-                    >
-                      <ChevronsLeft size={16} className="mr-1" /> Previous
-                    </Button>
-                    
-                    <span className="text-sm text-gray-400">
-                      Page {historyPage + 1} of {Math.ceil(queryHistory.length / HISTORY_ITEMS_PER_PAGE)}
-                    </span>
-                    
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-gray-300 border-gray-600 hover:bg-gray-700"
-                      onClick={goToNextHistoryPage}
-                      disabled={(historyPage + 1) * HISTORY_ITEMS_PER_PAGE >= queryHistory.length}
-                    >
-                      Next <ChevronsRight size={16} className="ml-1" />
-                    </Button>
+                {/* History content */}
+                {isHistoryLoading ? (
+                  <div className="flex justify-center items-center h-32">
+                    <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
                   </div>
+                ) : getPaginatedHistory().length === 0 ? (
+                  <div className="text-center text-gray-400 py-8">
+                    <p>No query history found</p>
+                    {!selectedDbId && <p className="text-sm mt-2">Select a database to view history</p>}
+                  </div>
+                ) : (
+                  getPaginatedHistory().map((item) => (
+                    <div
+                      key={item.id}
+                      className="p-3 mb-2 bg-gray-700 rounded-lg hover:bg-gray-650 transition-colors"
+                    >
+                      <div className="text-xs text-gray-400 mb-1 flex justify-between">
+                        <span>{formatDate(item.executed_at)}</span>
+                        <span className={`px-2 py-0.5 rounded-full ${item.success ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}`}>
+                          {item.success ? 'Success' : 'Failed'}
+                        </span>
+                      </div>
+                      <div className="mb-2 text-sm text-gray-300 line-clamp-1">
+                        {item.original_prompt}
+                      </div>
+                      <div className="mb-1">
+                        <SyntaxHighlighter
+                          language="sql"
+                          style={oneDark}
+                          customStyle={{
+                            padding: '0.75rem',
+                            borderRadius: '0.5rem',
+                            fontSize: '0.75rem',
+                            lineHeight: '1.4',
+                            maxHeight: '120px',
+                            overflow: 'auto'
+                          }}
+                        >
+                          {item.generated_sql}
+                        </SyntaxHighlighter>
+                      </div>
+                    </div>
+                  ))
                 )}
               </div>
             )}
+            
+            {/* Pagination controls - only show for history tab */}
+            {activeTab === 'history' && queryHistory.length > HISTORY_ITEMS_PER_PAGE && (
+              <div className="p-3 border-t border-gray-700 flex justify-between items-center">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-gray-300 border-gray-600 hover:bg-gray-700"
+                  onClick={goToPreviousHistoryPage}
+                  disabled={historyPage === 0}
+                >
+                  <ChevronsLeft size={16} className="mr-1" /> Previous
+                </Button>
+                
+                <span className="text-sm text-gray-400">
+                  Page {historyPage + 1} of {Math.ceil(queryHistory.length / HISTORY_ITEMS_PER_PAGE)}
+                </span>
+                
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-gray-300 border-gray-600 hover:bg-gray-700"
+                  onClick={goToNextHistoryPage}
+                  disabled={(historyPage + 1) * HISTORY_ITEMS_PER_PAGE >= queryHistory.length}
+                >
+                  Next <ChevronsRight size={16} className="ml-1" />
+                </Button>
+              </div>
+            )}
+            
+            <div className="p-3 border-t border-gray-700">
+              <Button 
+                className="w-full bg-gray-700 hover:bg-gray-600 text-gray-300 flex items-center justify-center"
+                onClick={clearConversation}
+              >
+                <Trash2 size={16} className="mr-2" />
+                Clear Current Chat
+              </Button>
+            </div>
           </div>
         )}
         
@@ -1063,7 +976,6 @@ export default function ChatbotPage() {
                           onChange={(e) => setDbConfig({ ...dbConfig, db_name: e.target.value })}
                           className="bg-gray-700 border-gray-600 text-gray-200 placeholder-gray-500"
                         />
-
                         <Button
                           className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
                           onClick={requestAddDatabase}
@@ -1104,7 +1016,6 @@ export default function ChatbotPage() {
                                     <span className="text-sm text-gray-400 italic">(selected)</span>
                                   )}
                                 </div>
-
                                 <div className="flex gap-2">
                                   <Button
                                     size="sm"
@@ -1279,7 +1190,6 @@ export default function ChatbotPage() {
                             )}
 
                             <p className="text-gray-300 mb-2">{responses[index].message}</p>
-
                             {/* Display result data as a table if available */}
                             {responses[index].result &&
                               Array.isArray(responses[index].result) &&

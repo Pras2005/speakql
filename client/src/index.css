@@ -118,3 +118,14 @@
     @apply bg-background text-foreground;
   }
 }
+
+.typewriter-cursor {
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  to {
+    opacity: 0;
+  }
+}
+

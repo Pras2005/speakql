@@ -1,10 +1,11 @@
-from sqlalchemy import create_engine
-from cryptography.fernet import Fernet
+import asyncio
 
-def get_postgres_connection(db: UserDatabase, fernet: Fernet):
-    password = fernet.decrypt(db.db_password_encrypted.encode()).decode()
-    host = db.host or "localhost"
-    port = db.port or 5432
-
-    db_url = f"postgresql://{db.db_user}:{password}@{host}:{port}/{db.db_name}"
-    return create_engine(db_url)
+async def run_with_timeout(func,*args,timeout_seconds =10,**kwargs):
+    try:
+        return await asyncio.wait_for(
+                asyncio.to_thread(func,*args,**kwargs),
+                timeout =timeout_seconds
+                )
+    except asyncio.TimeoutError:
+        print(f"request timed out after{timeout_seconds}")
+        return None

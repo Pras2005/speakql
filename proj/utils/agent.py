@@ -6,7 +6,7 @@ from utils.postgres_tools import PostgreSQLTools,get_postgresql_tools
 from utils.declarations import FUNCTION_DECLARATIONS
 import google.generativeai as genai
 from dotenv import load_dotenv
-
+import asyncio
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -112,7 +112,8 @@ class DatabaseAgent:
             Generate the most appropriate PostgreSQL query based on the actual database structure above.
             Return ONLY the SQL code, no explanations or markdown.
             The SQL should be valid for PostgreSQL and match the exact column names and table structure shown above take row counts into consideration for insert queries.
-            check first in which shcmea the table exist and then generate query."""
+            check first in which shcmea the table exist and then generate query.
+            only use public schema"""
             
             if self.debug:
                 print(f"Sending final prompt to AI...")
