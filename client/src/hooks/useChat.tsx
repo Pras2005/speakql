@@ -1,62 +1,54 @@
-import { API_URL } from "@/App";
 import { useState } from "react";
+import { apiClient } from "@/lib/api";
+import type { GenerateSqlResponse, ProviderType } from "@/lib/types";
 
-type StreamingResponseProps = {
+type GenerateSQLProps = {
   prompt: string;
-  language?: string;
+  db_id: number;
+  provider_type?: ProviderType;
+  model_name?: string;
 };
 
 type UseChatReturns = {
   response: string;
-  getStreamingResponse: (props: StreamingResponseProps) => void;
+  loading: boolean;
+  generateSQL: (props: GenerateSQLProps) => Promise<GenerateSqlResponse>;
 };
 
 export default function useChat(): UseChatReturns {
   const [response, setResponse] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const getStreamingResponse = async ({
+  const generateSQL = async ({
     prompt,
-    language,
-  }: StreamingResponseProps) => {
-    const body = {
-      prompt,
-      language: language ? language : "en",
-    };
-
+    db_id,
+    provider_type = "gemini",
+    model_name,
+  }: GenerateSQLProps) => {
+    setLoading(true);
     setResponse("");
 
     try {
-      const response = await fetch(`${API_URL}/chat/stream`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
+      const res = await apiClient.generateSql({
+        prompt,
+        db_id,
+        provider_type,
+        model_name,
       });
 
-      if (!response.body) {
-        throw new Error("Response body is null");
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder("utf-8");
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        setResponse((prev) => prev + chunk);
-      }
+      setResponse(res.data.raw_sql);
+      return res.data;
     } catch (error) {
-      console.error("Error while streaming:", error);
+      console.error("Error generating SQL:", error);
+      throw error;
+    } finally {
+      setLoading(false);
     }
   };
 
-  const hooks = {
+  return {
     response,
-    getStreamingResponse,
+    loading,
+    generateSQL,
   };
-
-  return hooks;
 }

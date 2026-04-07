@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { motion } from 'framer-motion';
@@ -23,7 +23,7 @@ export default function LoginPage() {
     }
   }, []);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     
     // Save or remove credentials based on remember me state
@@ -35,7 +35,7 @@ export default function LoginPage() {
       localStorage.removeItem('rememberMe');
     }
     
-    requestLogin(username, password);
+    void requestLogin(username, password);
   };
   
   return (

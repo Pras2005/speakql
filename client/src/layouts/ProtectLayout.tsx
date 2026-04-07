@@ -1,12 +1,13 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Outlet } from 'react-router-dom';
+import { authStorage } from '@/lib/auth';
 
 const ProtectLayout = () => {
   const navigate = useNavigate();
 
   const isLoggedIn = () => {
-    return !!localStorage.getItem('token');
+    return authStorage.isAuthenticated();
   };
 
   useEffect(() => {

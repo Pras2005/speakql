@@ -1,11 +1,11 @@
-import { API_URL } from '@/constants';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
 import { toast } from 'sonner';
+import { apiClient, getErrorMessage } from '@/lib/api';
+import { authStorage } from '@/lib/auth';
 
 type UseAuthReturns = {
-  requestLogin: (username: string, password: string) => void;
-  requestSignup: (username: string, password: string) => void;
+  requestLogin: (username: string, password: string) => Promise<void>;
+  requestSignup: (username: string, password: string) => Promise<void>;
   requestLogout: () => void;
   isLoggedIn: () => boolean;
 };
@@ -15,31 +15,31 @@ function useAuth(): UseAuthReturns {
 
   const requestLogin = async (username: string, password: string) => {
     try {
-      const res = await axios.post(`${API_URL}/login`, { username, password });
-      localStorage.setItem('token', res.data.access_token);
+      const res = await apiClient.login(username, password);
+      authStorage.setToken(res.data.access_token);
 
       toast.success(`Welcome back, ${username}!`);
       navigate('/chat');
     } catch (error) {
-      toast.error('Login failed. Please check your credentials.');
+      toast.error(getErrorMessage(error) || 'Login failed. Please check your credentials.');
       console.log(error);
     }
   };
 
   const requestSignup = async (username: string, password: string) => {
     try {
-      await axios.post(`${API_URL}/signup`, { username, password });
+      await apiClient.signup(username, password);
 
       toast.success('Signup successful! You can now log in.');
       navigate('/login');
     } catch (error) {
-      toast.error('Signup failed. Try a different username.');
+      toast.error(getErrorMessage(error) || 'Signup failed. Try a different username.');
       console.log(error);
     }
   };
 
   const requestLogout = () => {
-    localStorage.removeItem('token');
+    authStorage.clearToken();
 
     toast('Logged out successfully.', {
       description: 'Hope to see you again soon!',
@@ -49,7 +49,7 @@ function useAuth(): UseAuthReturns {
   };
 
   const isLoggedIn = () => {
-    return !!localStorage.getItem('token');
+    return authStorage.isAuthenticated();
   };
 
   return {

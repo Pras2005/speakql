@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import useAuth from '@/hooks/useAuth';
 import { Database } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function SignupPage() {
   const [username, setUsername] = useState('');
@@ -12,9 +13,15 @@ export default function SignupPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const { requestSignup } = useAuth();
   
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    requestSignup(username, password);
+
+    if (password !== confirmPassword) {
+      toast.error('Passwords do not match.');
+      return;
+    }
+
+    void requestSignup(username, password);
   };
   
   return (

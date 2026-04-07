@@ -1,120 +1,89 @@
-import { useState, useEffect } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { format, parseISO } from 'date-fns';
+import { ArrowLeft, Calendar, Check, Clock, Copy, Database, Edit2 } from 'lucide-react';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  ArrowLeft, 
-  Copy, 
-  Check, 
-  Calendar, 
-  Clock, 
-  Database,
-  ChevronDown 
-} from 'lucide-react';
-import { format, parseISO } from 'date-fns';
-import axios from 'axios';
-import { API_URL } from '@/constants';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from '@/components/ui/select';
+import { apiClient } from '@/lib/api';
+import { authStorage } from '@/lib/auth';
+import type { QueryHistoryItem, UserDatabase } from '@/lib/types';
 
-interface Database {
-  id: number;
-  name: string;
-  description?: string;
-}
-
-interface QueryHistoryItem {
-  id: number;
-  user_id: number;
-  db_id: number;
-  prompt: string;
-  raw_sql: string;
-  status: string;
-  result?: any;
-  error?: string;
-  timestamp: string;
-}
-
-interface GroupedQueries {
-  [date: string]: QueryHistoryItem[];
-}
+type GroupedQueries = Record<string, QueryHistoryItem[]>;
+type FilterMode = 'all' | 'success' | 'error';
 
 export default function QueryHistoryPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const dbIdParam = searchParams.get('dbId');
-  
+
   const [selectedDbId, setSelectedDbId] = useState<number>(dbIdParam ? Number(dbIdParam) : 0);
-  const [databases, setDatabases] = useState<Database[]>([]);
+  const [databases, setDatabases] = useState<UserDatabase[]>([]);
   const [queryHistory, setQueryHistory] = useState<QueryHistoryItem[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
+  const [loading, setLoading] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<string | null>(null);
-  const token = localStorage.getItem('token');
 
   useEffect(() => {
-    if (token) {
-      fetchDatabases();
-    } else {
+    if (!authStorage.isAuthenticated()) {
       navigate('/login');
+      return;
     }
-  }, [token]);
+
+    void fetchDatabases();
+  }, [navigate]);
 
   useEffect(() => {
     if (dbIdParam && Number(dbIdParam) !== selectedDbId) {
       setSelectedDbId(Number(dbIdParam));
     }
-  }, [dbIdParam]);
+  }, [dbIdParam, selectedDbId]);
 
   useEffect(() => {
-    if (selectedDbId !== 0) {
-      fetchQueryHistory();
-      
-      // Update URL with the selected database ID
-      if (dbIdParam !== selectedDbId.toString()) {
-        setSearchParams({ dbId: selectedDbId.toString() });
-      }
+    if (selectedDbId === 0) {
+      return;
     }
-  }, [selectedDbId]);
+
+    if (dbIdParam !== selectedDbId.toString()) {
+      setSearchParams({ dbId: selectedDbId.toString() });
+    }
+
+    void fetchQueryHistory(selectedDbId);
+  }, [dbIdParam, selectedDbId, setSearchParams]);
 
   const fetchDatabases = async () => {
     try {
-      const response = await axios.get(`${API_URL}/get_databases`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setDatabases(response.data);
-      
-      // If no database is selected but we have databases, select the first one
-      if (selectedDbId === 0 && response.data.length > 0 && !dbIdParam) {
-        setSelectedDbId(response.data[0].id);
+      const response = await apiClient.getDatabases();
+      const nextDatabases = response.data;
+      setDatabases(nextDatabases);
+
+      if (selectedDbId === 0 && nextDatabases.length > 0 && !dbIdParam) {
+        setSelectedDbId(nextDatabases[0].id);
       }
     } catch (error) {
-      console.error("Error fetching databases:", error);
+      console.error('Error fetching databases:', error);
     }
   };
 
-  const fetchQueryHistory = async () => {
+  const fetchQueryHistory = async (dbId: number) => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API_URL}/query-history/${selectedDbId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      
-      // Sort by timestamp desc (newest first)
-      const sortedHistory = response.data.sort((a: QueryHistoryItem, b: QueryHistoryItem) => 
-        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      const response = await apiClient.getQueryHistory(dbId);
+      const sortedHistory = [...response.data].sort(
+        (a, b) => new Date(b.executed_at).getTime() - new Date(a.executed_at).getTime(),
       );
-      
       setQueryHistory(sortedHistory);
     } catch (error) {
-      console.error("Error fetching query history:", error);
+      console.error('Error fetching query history:', error);
     } finally {
       setLoading(false);
     }
@@ -130,31 +99,38 @@ export default function QueryHistoryPage() {
     setSelectedDbId(Number(value));
   };
 
-  // Group queries by date for better organization
-  const groupQueriesByDate = (): GroupedQueries => {
-    const grouped: GroupedQueries = {};
-    queryHistory.forEach(query => {
-      const date = new Date(query.timestamp).toLocaleDateString();
-      if (!grouped[date]) {
-        grouped[date] = [];
-      }
-      grouped[date].push(query);
-    });
-    return grouped;
+  const handleReRun = (query: QueryHistoryItem) => {
+    sessionStorage.setItem(
+      'reRunQuery',
+      JSON.stringify({
+        prompt: query.original_prompt ?? '',
+        raw_sql: query.executed_sql || query.generated_sql || '',
+        db_id: selectedDbId,
+      }),
+    );
+    navigate('/chat');
   };
 
-  // Format timestamp to human-readable format
-  const formatTime = (timestamp: string): string => {
+  const groupQueriesByDate = (items: QueryHistoryItem[]): GroupedQueries => {
+    return items.reduce<GroupedQueries>((groups, query) => {
+      const dateKey = new Date(query.executed_at).toLocaleDateString();
+      if (!groups[dateKey]) {
+        groups[dateKey] = [];
+      }
+      groups[dateKey].push(query);
+      return groups;
+    }, {});
+  };
+
+  const formatTime = (timestamp: string) => {
     try {
-      const date = parseISO(timestamp);
-      return format(date, 'h:mm a');
-    } catch (e) {
+      return format(parseISO(timestamp), 'h:mm a');
+    } catch {
       return timestamp;
     }
   };
 
-  // Format date for section headers
-  const formatDate = (dateStr: string): string => {
+  const formatDateLabel = (dateStr: string) => {
     const today = new Date().toLocaleDateString();
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
@@ -165,44 +141,143 @@ export default function QueryHistoryPage() {
     return dateStr;
   };
 
-  // Build execution status badge
-  const statusBadge = (status: string) => {
-    const bgColor = status === 'success' ? 'bg-green-100' : 'bg-red-100';
-    const textColor = status === 'success' ? 'text-green-700' : 'text-red-700';
-    
+  const getStatus = (query: QueryHistoryItem) => (query.success ? 'success' : 'error');
+  const getSql = (query: QueryHistoryItem) => query.executed_sql || query.generated_sql || '-- No SQL recorded';
+  const isVisibleForFilter = (query: QueryHistoryItem, filter: FilterMode) => {
+    if (filter === 'all') return true;
+    return filter === 'success' ? query.success : !query.success;
+  };
+
+  const groupedQueries = useMemo(() => groupQueriesByDate(queryHistory), [queryHistory]);
+
+  const statusBadge = (status: 'success' | 'error') => {
+    const isSuccess = status === 'success';
     return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${bgColor} ${textColor}`}>
-        {status}
+      <span
+        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+          isSuccess ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+        }`}
+      >
+        {isSuccess ? 'success' : 'error'}
       </span>
     );
   };
 
+  const renderQuerySection = (filter: FilterMode) => (
+    <>
+      {Object.entries(groupedQueries).map(([date, queries]) => {
+        const filteredQueries = queries.filter((query) => isVisibleForFilter(query, filter));
+        if (filteredQueries.length === 0) {
+          return null;
+        }
+
+        return (
+          <div key={date}>
+            <h2 className="mb-3 flex items-center text-lg font-semibold text-gray-700">
+              <Calendar size={18} className="mr-2 text-indigo-500" />
+              {formatDateLabel(date)}
+            </h2>
+            <div className="space-y-4">
+              {filteredQueries.map((query, idx) => {
+                const sql = getSql(query);
+                const status = getStatus(query);
+                const copyKey = `${filter}-${query.id}-${idx}`;
+
+                return (
+                  <Card
+                    key={query.id}
+                    className="overflow-hidden bg-white shadow-md transition-shadow duration-300 hover:shadow-lg"
+                  >
+                    <CardHeader className="border-b border-gray-200 bg-gray-50 px-4 py-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2">
+                          <Clock size={16} className="text-gray-500" />
+                          <span className="text-sm text-gray-600">{formatTime(query.executed_at)}</span>
+                          {statusBadge(status)}
+                          <span className="rounded-full bg-gray-200 px-2 py-0.5 text-xs uppercase tracking-wide text-gray-700">
+                            {query.event_type}
+                          </span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 gap-1 text-gray-600 hover:bg-gray-200"
+                            onClick={() => handleReRun(query)}
+                          >
+                            <Edit2 size={14} />
+                            <span className="text-xs">Edit in Chat</span>
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 w-8 rounded-full hover:bg-gray-200"
+                            onClick={() => copyToClipboard(sql, copyKey)}
+                          >
+                            {copiedIndex === copyKey ? <Check size={16} /> : <Copy size={16} />}
+                          </Button>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      <SyntaxHighlighter
+                        language="sql"
+                        style={oneDark}
+                        customStyle={{
+                          margin: '0',
+                          padding: '1rem',
+                          borderRadius: '0',
+                          fontSize: '0.875rem',
+                          lineHeight: '1.5',
+                        }}
+                      >
+                        {sql}
+                      </SyntaxHighlighter>
+
+                      {query.original_prompt && (
+                        <div className="border-t border-indigo-100 bg-indigo-50 px-4 py-3">
+                          <p className="text-sm text-gray-700">
+                            <span className="font-medium">Prompt:</span> {query.original_prompt}
+                          </p>
+                        </div>
+                      )}
+
+                      {query.error_message && (
+                        <div className="border-t border-red-100 bg-red-50 px-4 py-3">
+                          <p className="text-sm text-red-700">
+                            <span className="font-medium">Error:</span> {query.error_message}
+                          </p>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+
   return (
-    <div className="flex flex-col h-full bg-gradient-to-br from-indigo-100 to-white">
+    <div className="flex h-full flex-col bg-gradient-to-br from-indigo-100 to-white">
       <div className="p-6">
-        <div className="flex items-center mb-6">
-          <Button 
-            variant="ghost" 
-            className="mr-2"
-            onClick={() => navigate('/')}
-          >
+        <div className="mb-6 flex items-center">
+          <Button variant="ghost" className="mr-2" onClick={() => navigate('/')}>
             <ArrowLeft size={20} />
           </Button>
-          <h1 className="text-3xl font-bold mr-4">Query History</h1>
-          
-          {/* Database Selector */}
+          <h1 className="mr-4 text-3xl font-bold">Query History</h1>
+
           <div className="ml-auto">
-            <Select 
-              value={selectedDbId.toString()} 
-              onValueChange={handleDatabaseChange}
-            >
-              <SelectTrigger className="w-[200px]">
+            <Select value={selectedDbId.toString()} onValueChange={handleDatabaseChange}>
+              <SelectTrigger className="w-[220px]">
                 <SelectValue placeholder="Select database" />
               </SelectTrigger>
               <SelectContent>
                 {databases.map((db) => (
                   <SelectItem key={db.id} value={db.id.toString()}>
-                    {db.name}
+                    {db.db_name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -211,22 +286,17 @@ export default function QueryHistoryPage() {
         </div>
 
         {loading ? (
-          <div className="flex justify-center items-center py-20">
-            <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-indigo-500"></div>
+          <div className="flex items-center justify-center py-20">
+            <div className="h-10 w-10 animate-spin rounded-full border-b-2 border-t-2 border-indigo-500" />
           </div>
         ) : databases.length === 0 ? (
           <Card className="bg-white shadow-md">
             <CardContent className="pt-6">
-              <div className="text-center py-10">
+              <div className="py-10 text-center">
                 <Database className="mx-auto h-12 w-12 text-gray-400" />
                 <h3 className="mt-2 text-lg font-medium text-gray-900">No databases found</h3>
-                <p className="mt-1 text-sm text-gray-500">
-                  You don't have access to any databases yet.
-                </p>
-                <Button 
-                  className="mt-4"
-                  onClick={() => navigate('/')}
-                >
+                <p className="mt-1 text-sm text-gray-500">You do not have access to any databases yet.</p>
+                <Button className="mt-4" onClick={() => navigate('/')}>
                   Go to Dashboard
                 </Button>
               </div>
@@ -235,11 +305,11 @@ export default function QueryHistoryPage() {
         ) : queryHistory.length === 0 ? (
           <Card className="bg-white shadow-md">
             <CardContent className="pt-6">
-              <div className="text-center py-10">
+              <div className="py-10 text-center">
                 <Database className="mx-auto h-12 w-12 text-gray-400" />
                 <h3 className="mt-2 text-lg font-medium text-gray-900">No query history</h3>
                 <p className="mt-1 text-sm text-gray-500">
-                  There's no query history for this database yet.
+                  There is no query history for this database yet.
                 </p>
               </div>
             </CardContent>
@@ -248,206 +318,21 @@ export default function QueryHistoryPage() {
           <div className="space-y-6">
             <Tabs defaultValue="all" className="w-full">
               <TabsList className="mb-4">
-                <TabsTrigger value="all">All Queries</TabsTrigger>
+                <TabsTrigger value="all">All Events</TabsTrigger>
                 <TabsTrigger value="success">Successful</TabsTrigger>
                 <TabsTrigger value="error">Failed</TabsTrigger>
               </TabsList>
-              
+
               <TabsContent value="all" className="space-y-6">
-                {Object.entries(groupQueriesByDate()).map(([date, queries]) => (
-                  <div key={date}>
-                    <h2 className="text-lg font-semibold text-gray-700 mb-3 flex items-center">
-                      <Calendar size={18} className="mr-2 text-indigo-500" />
-                      {formatDate(date)}
-                    </h2>
-                    <div className="space-y-4">
-                      {queries.map((query, idx) => (
-                        <Card key={idx} className="overflow-hidden bg-white shadow-md hover:shadow-lg transition-shadow duration-300">
-                          <CardHeader className="bg-gray-50 px-4 py-3 border-b border-gray-200">
-                            <div className="flex justify-between items-center">
-                              <div className="flex items-center space-x-2">
-                                <Clock size={16} className="text-gray-500" />
-                                <span className="text-sm text-gray-600">{formatTime(query.timestamp)}</span>
-                                {query.status && statusBadge(query.status)}
-                              </div>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-8 w-8 rounded-full hover:bg-gray-200"
-                                onClick={() => copyToClipboard(query.raw_sql, `all-${idx}`)}
-                              >
-                                {copiedIndex === `all-${idx}` ? <Check size={16} /> : <Copy size={16} />}
-                              </Button>
-                            </div>
-                          </CardHeader>
-                          <CardContent className="p-0">
-                            <SyntaxHighlighter
-                              language="sql"
-                              style={oneDark}
-                              customStyle={{
-                                margin: '0',
-                                padding: '1rem',
-                                borderRadius: '0',
-                                fontSize: '0.875rem',
-                                lineHeight: '1.5',
-                              }}
-                            >
-                              {query.raw_sql}
-                            </SyntaxHighlighter>
-                            
-                            {query.prompt && (
-                              <div className="px-4 py-3 bg-indigo-50 border-t border-indigo-100">
-                                <p className="text-sm text-gray-700">
-                                  <span className="font-medium">Prompt:</span> {query.prompt}
-                                </p>
-                              </div>
-                            )}
-                            
-                            {query.error && (
-                              <div className="px-4 py-3 bg-red-50 border-t border-red-100">
-                                <p className="text-sm text-red-700">
-                                  <span className="font-medium">Error:</span> {query.error}
-                                </p>
-                              </div>
-                            )}
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+                {renderQuerySection('all')}
               </TabsContent>
-              
+
               <TabsContent value="success" className="space-y-6">
-                {Object.entries(groupQueriesByDate()).map(([date, queries]) => {
-                  const successQueries = queries.filter(q => q.status === 'success');
-                  if (successQueries.length === 0) return null;
-                  
-                  return (
-                    <div key={date}>
-                      <h2 className="text-lg font-semibold text-gray-700 mb-3 flex items-center">
-                        <Calendar size={18} className="mr-2 text-indigo-500" />
-                        {formatDate(date)}
-                      </h2>
-                      <div className="space-y-4">
-                        {successQueries.map((query, idx) => (
-                          <Card key={idx} className="overflow-hidden bg-white shadow-md hover:shadow-lg transition-shadow duration-300">
-                            <CardHeader className="bg-gray-50 px-4 py-3 border-b border-gray-200">
-                              <div className="flex justify-between items-center">
-                                <div className="flex items-center space-x-2">
-                                  <Clock size={16} className="text-gray-500" />
-                                  <span className="text-sm text-gray-600">{formatTime(query.timestamp)}</span>
-                                  {statusBadge('success')}
-                                </div>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-8 w-8 rounded-full hover:bg-gray-200"
-                                  onClick={() => copyToClipboard(query.raw_sql, `success-${idx}`)}
-                                >
-                                  {copiedIndex === `success-${idx}` ? <Check size={16} /> : <Copy size={16} />}
-                                </Button>
-                              </div>
-                            </CardHeader>
-                            <CardContent className="p-0">
-                              <SyntaxHighlighter
-                                language="sql"
-                                style={oneDark}
-                                customStyle={{
-                                  margin: '0',
-                                  padding: '1rem',
-                                  borderRadius: '0',
-                                  fontSize: '0.875rem',
-                                  lineHeight: '1.5',
-                                }}
-                              >
-                                {query.raw_sql}
-                              </SyntaxHighlighter>
-                              
-                              {query.prompt && (
-                                <div className="px-4 py-3 bg-indigo-50 border-t border-indigo-100">
-                                  <p className="text-sm text-gray-700">
-                                    <span className="font-medium">Prompt:</span> {query.prompt}
-                                  </p>
-                                </div>
-                              )}
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
+                {renderQuerySection('success')}
               </TabsContent>
-              
+
               <TabsContent value="error" className="space-y-6">
-                {Object.entries(groupQueriesByDate()).map(([date, queries]) => {
-                  const errorQueries = queries.filter(q => q.status === 'error');
-                  if (errorQueries.length === 0) return null;
-                  
-                  return (
-                    <div key={date}>
-                      <h2 className="text-lg font-semibold text-gray-700 mb-3 flex items-center">
-                        <Calendar size={18} className="mr-2 text-indigo-500" />
-                        {formatDate(date)}
-                      </h2>
-                      <div className="space-y-4">
-                        {errorQueries.map((query, idx) => (
-                          <Card key={idx} className="overflow-hidden bg-white shadow-md hover:shadow-lg transition-shadow duration-300">
-                            <CardHeader className="bg-gray-50 px-4 py-3 border-b border-gray-200">
-                              <div className="flex justify-between items-center">
-                                <div className="flex items-center space-x-2">
-                                  <Clock size={16} className="text-gray-500" />
-                                  <span className="text-sm text-gray-600">{formatTime(query.timestamp)}</span>
-                                  {statusBadge('error')}
-                                </div>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-8 w-8 rounded-full hover:bg-gray-200"
-                                  onClick={() => copyToClipboard(query.raw_sql, `error-${idx}`)}
-                                >
-                                  {copiedIndex === `error-${idx}` ? <Check size={16} /> : <Copy size={16} />}
-                                </Button>
-                              </div>
-                            </CardHeader>
-                            <CardContent className="p-0">
-                              <SyntaxHighlighter
-                                language="sql"
-                                style={oneDark}
-                                customStyle={{
-                                  margin: '0',
-                                  padding: '1rem',
-                                  borderRadius: '0',
-                                  fontSize: '0.875rem',
-                                  lineHeight: '1.5',
-                                }}
-                              >
-                                {query.raw_sql}
-                              </SyntaxHighlighter>
-                              
-                              {query.error && (
-                                <div className="px-4 py-3 bg-red-50 border-t border-red-100">
-                                  <p className="text-sm text-red-700">
-                                    <span className="font-medium">Error:</span> {query.error}
-                                  </p>
-                                </div>
-                              )}
-                              
-                              {query.prompt && (
-                                <div className="px-4 py-3 bg-indigo-50 border-t border-indigo-100">
-                                  <p className="text-sm text-gray-700">
-                                    <span className="font-medium">Prompt:</span> {query.prompt}
-                                  </p>
-                                </div>
-                              )}
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
+                {renderQuerySection('error')}
               </TabsContent>
             </Tabs>
           </div>
