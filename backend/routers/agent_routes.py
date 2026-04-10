@@ -9,7 +9,6 @@ from auth.auth_bearer import JWTBearer
 from database import get_session
 from utils.sql_safety import validate_sql_safety
 from utils.visualizer import get_db_structure_json
-import asyncio
 router = APIRouter()
 
 @router.post("/generate-sql", response_model=GenerateSQLResponse)
@@ -132,8 +131,8 @@ async def visualize_schema(db_id: int, session: AsyncSession = Depends(get_sessi
     agent = DatabaseAgent(user_db=user_db, debug=True)
     return await get_db_structure_json(agent)
 
-    @router.post("/explain-sql")
-    async def explain_sql(request: ExecuteSQLRequest, session: AsyncSession = Depends(get_session), user: User = Depends(JWTBearer())):
+@router.post("/explain-sql")
+async def explain_sql(request: ExecuteSQLRequest, session: AsyncSession = Depends(get_session), user: User = Depends(JWTBearer())):
     """Execute EXPLAIN on the provided raw SQL query."""
     user_id = int(user['sub'])
     user_databases = await get_user_databases(session, user_id)
@@ -153,10 +152,9 @@ async def visualize_schema(db_id: int, session: AsyncSession = Depends(get_sessi
     explain_result = await run_with_timeout(agent.tools.execute_query, explain_sql, timeout_seconds=10)
 
     if explain_result is None:
-         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="EXPLAIN timed out")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="EXPLAIN timed out")
 
     if "error" in explain_result:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=explain_result["error"])
 
     return {"status": "success", "result": explain_result}
-
