@@ -1,16 +1,13 @@
 import json
-import os
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, List, Optional
 from abc import ABC, abstractmethod
 
 import google.generativeai as genai
 from openai import OpenAI
-from dotenv import load_dotenv
 
 from utils.declarations import FUNCTION_DECLARATIONS
 from utils.postgres_tools import get_postgresql_tools
-
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
+from core.config import settings
 
 class LLMProvider(ABC):
     @abstractmethod
@@ -19,21 +16,14 @@ class LLMProvider(ABC):
 
 class GeminiProvider(LLMProvider):
     def __init__(self, model_name: str = "gemini-2.0-flash"):
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        genai.configure(api_key=settings.GEMINI_API_KEY)
         self.model = genai.GenerativeModel(model_name)
-
-    async def generate_content(self, prompt: str) -> str:
-        # genai is mostly sync but we can run in thread if needed. 
-        # For simplicity in this refactor, we keep it as is or use to_thread
-        import asyncio
-        response = await asyncio.to_thread(self.model.generate_content, prompt)
-        return getattr(response, "text", "") if response else ""
 
 class OpenAICompatibleProvider(LLMProvider):
     def __init__(self, model_name: str, base_url: Optional[str] = None, api_key: Optional[str] = None):
         self.client = OpenAI(
-            base_url=base_url or os.getenv("LOCAL_AI_BASE_URL", "http://localhost:11434/v1"),
-            api_key=api_key or os.getenv("LOCAL_AI_API_KEY", "ollama")
+            base_url=base_url or settings.LOCAL_AI_BASE_URL,
+            api_key=api_key or settings.LOCAL_AI_API_KEY
         )
         self.model_name = model_name
 
@@ -47,22 +37,12 @@ class OpenAICompatibleProvider(LLMProvider):
             return response.choices[0].message.content
         return await asyncio.to_thread(sync_call)
 
-class ModelFactory:
-    @staticmethod
-    def get_provider(provider_type: str, model_name: Optional[str] = None) -> LLMProvider:
-        if provider_type.lower() == "gemini":
-            return GeminiProvider(model_name or "gemini-2.0-flash")
-        elif provider_type.lower() == "local" or provider_type.lower() == "openai":
-            return OpenAICompatibleProvider(model_name or "qwen2.5-coder")
-        else:
-            raise ValueError(f"Unsupported provider type: {provider_type}")
-
 class DatabaseAgent:
-    def __init__(self, user_db, provider_type: str = "gemini", model_name: Optional[str] = None, debug=True):
+    def __init__(self, user_db, ai_provider: LLMProvider, debug=True):
         """Initialize the DatabaseAgent."""
         self.debug = debug
         self.tools = get_postgresql_tools(user_db)
-        self.ai_provider = ModelFactory.get_provider(provider_type, model_name)
+        self.ai_provider = ai_provider
         self.max_steps = 6
 
     def _clean_sql(self, sql: str) -> str:

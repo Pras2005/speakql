@@ -1,3 +1,4 @@
 env/
 proj/__pycache__
 .env
+code_example/

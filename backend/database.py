@@ -1,16 +1,18 @@
-import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
-from dotenv import load_dotenv
+from core.config import settings
 
-load_dotenv()
+# Shared engine and session factory
+engine = create_async_engine(
+    settings.DATABASE_URL, 
+    echo=settings.SQL_ECHO
+)
 
-# Default to a local postgres if not provided
-# Note: Use postgresql+asyncpg:// for async
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/speakql")
-
-engine = create_async_engine(DATABASE_URL, echo=True)
+# Shared session factory
+async_session_factory = sessionmaker(
+    engine, class_=AsyncSession, expire_on_commit=False
+)
 
 async def init_db():
     async with engine.begin() as conn:
@@ -19,8 +21,5 @@ async def init_db():
         await conn.run_sync(SQLModel.metadata.create_all)
 
 async def get_session() -> AsyncSession:
-    async_session = sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False
-    )
-    async with async_session() as session:
+    async with async_session_factory() as session:
         yield session
