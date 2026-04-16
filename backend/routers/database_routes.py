@@ -5,6 +5,8 @@ from repositories.database_repository import DatabaseRepository
 from repositories.audit_repository import AuditRepository
 from services.database_service import DatabaseService
 from services.audit_service import AuditService
+from repositories.catalog_repository import CatalogRepository, BusinessTermRepository, MetricDefinitionRepository
+from services.catalog_service import CatalogService
 from schemas.db_schemas import UserDatabaseCreate, UserDatabaseUpdate, UserDatabaseRead
 from schemas.query_schemas import QueryHistoryRead
 from auth.auth_bearer import JWTBearer
@@ -12,11 +14,20 @@ from typing import List
 
 router = APIRouter()
 
-async def get_database_service(session: AsyncSession = Depends(get_session)):
+async def get_catalog_service(session: AsyncSession = Depends(get_session)):
+    catalog_repo = CatalogRepository(session)
+    glossary_repo = BusinessTermRepository(session)
+    metric_repo = MetricDefinitionRepository(session)
+    return CatalogService(catalog_repo, glossary_repo, metric_repo)
+
+async def get_database_service(
+    session: AsyncSession = Depends(get_session),
+    catalog_service: CatalogService = Depends(get_catalog_service)
+):
     db_repo = DatabaseRepository(session)
     audit_repo = AuditRepository(session)
     audit_service = AuditService(audit_repo)
-    return DatabaseService(db_repo, audit_service)
+    return DatabaseService(db_repo, audit_service, catalog_service)
 
 from auth.auth_guards import require_admin
 
@@ -81,6 +92,15 @@ async def rotate_key(
     if not new_key:
         raise HTTPException(status_code=404, detail="Database not found or unauthorized")
     return {"mcp_api_key": new_key}
+
+@router.post("/{db_id}/refresh-catalog")
+async def refresh_catalog(
+    db_id: int,
+    db_service: DatabaseService = Depends(get_database_service),
+    token_data: dict = Depends(require_admin)
+):
+    await db_service.refresh_catalog(db_id)
+    return {"msg": "Catalog refresh triggered"}
 
 @router.get("/{db_id}/query-history", response_model=List[QueryHistoryRead])
 async def get_query_history(

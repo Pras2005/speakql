@@ -146,6 +146,7 @@ export default function ChatbotPage() {
   // Add state for auth refresh
   const [isAuthenticated, setIsAuthenticated] = useState(authStorage.isAuthenticated());
   const [isExplaining, setIsExplaining] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { requestLogout } = useAuth();
@@ -416,7 +417,7 @@ export default function ChatbotPage() {
 
   const requestExecuteSQL = async (
     sql = rawSQL,
-    metadata?: { originalPrompt?: string; generatedSql?: string }
+    metadata?: { originalPrompt?: string; generatedSql?: string; sqlRationale?: string }
   ) => {
     try {
       setLoading(true);
@@ -431,6 +432,7 @@ export default function ChatbotPage() {
         db_id: selectedDbId,
         original_prompt: metadata?.originalPrompt,
         generated_sql: metadata?.generatedSql || sql || rawSQL,
+        sql_rationale: metadata?.sqlRationale,
       });
 
       // Create a successful response object with the query results
@@ -491,6 +493,32 @@ export default function ChatbotPage() {
     }
   };
 
+  const requestExportCSV = async (sql: string) => {
+    try {
+      setIsExporting(true);
+      setAppError(null);
+      const response = await apiClient.exportSql({
+        raw_sql: sql,
+        db_id: selectedDbId,
+      }, 'csv');
+      
+      // Download the blob
+      const blob = new Blob([response.data], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `query_results_${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (error) {
+      console.error("Export error:", error);
+      setAppError(getErrorMessage(error));
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   // Utility functions
   const copyToClipboard = (text: string, index: number) => {
     navigator.clipboard.writeText(text);
@@ -533,31 +561,6 @@ export default function ChatbotPage() {
     }));
   };
 
-  const exportResultsAsCSV = (result: any[]) => {
-    if (!result || result.length === 0) return;
-
-    const headers = Object.keys(result[0]);
-    const csvRows = [
-      headers.join(','),
-      ...result.map((row) =>
-        headers
-          .map((header) => (typeof row[header] === 'string' ? `"${row[header]}"` : row[header]))
-          .join(','),
-      ),
-    ];
-
-    const csvContent = csvRows.join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `query_results_${new Date().toISOString().slice(0, 10)}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
   const clearConversation = () => {
     if (window.confirm('Are you sure you want to clear the conversation?')) {
       setPrompts([]);
@@ -573,7 +576,7 @@ export default function ChatbotPage() {
   };
 
   // Helper function to render query results as a table
-  const renderQueryResults = (result: any) => {
+  const renderQueryResults = (result: any, sql: string) => {
     if (!result || !Array.isArray(result) || result.length === 0) {
       return <p className="text-gray-400 italic">No results returned</p>;
     }
@@ -589,9 +592,11 @@ export default function ChatbotPage() {
             size="sm"
             variant="outline"
             className="text-xs flex items-center gap-1 bg-gray-700 text-gray-300 hover:bg-gray-600 border-gray-600"
-            onClick={() => exportResultsAsCSV(result)}
+            onClick={() => requestExportCSV(sql)}
+            disabled={isExporting}
           >
-            <Download size={14} /> Export CSV
+            {isExporting ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />} 
+            Governed Export
           </Button>
         </div>
         <div className="overflow-x-auto max-h-96">
@@ -1285,7 +1290,7 @@ export default function ChatbotPage() {
                             {/* Display result data as a table if available */}
                             {responses[index].result &&
                               Array.isArray(responses[index].result) &&
-                              renderQueryResults(responses[index].result)}
+                              renderQueryResults(responses[index].result, responses[index].raw_sql)}
 
                             {/* Display status if available */}
                             {responses[index].status && (
@@ -1322,6 +1327,7 @@ export default function ChatbotPage() {
                                       requestExecuteSQL(responses[index].raw_sql, {
                                         originalPrompt: prompts[index],
                                         generatedSql: responses[index].raw_sql,
+                                        sqlRationale: responses[index].message,
                                       })
                                     }
                                     disabled={loading}

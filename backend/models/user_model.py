@@ -6,6 +6,9 @@ if TYPE_CHECKING:
     from .db_model import UserDatabase
     from .tenant_model import Membership
 
+# Explicit import for SQLModel mapper to resolve relationships during combined test runs
+from .tenant_model import Membership
+
 class User(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(unique=True, index=True)

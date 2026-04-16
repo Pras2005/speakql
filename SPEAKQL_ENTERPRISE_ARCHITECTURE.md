@@ -131,9 +131,10 @@ sensitivity_rule    (id, workspace_id, table_pattern, column_pattern, label, mas
 approval_request    (id, query_id, requested_by, reviewed_by, status, reviewed_at)
 
 -- Audit
-audit_event         (id, org_id, workspace_id, user_id, event_type, payload_hash,
-                     payload_json, prev_hash, created_at)
+audit_event         (id, org_id, workspace_id, user_id, event_type, hash,
+                     details_json, previous_hash, created_at)
 -- NOTE: audit_event is append-only. No UPDATE or DELETE permissions on this table.
+-- It uses SHA-256 chain-hashing for tamper-evidence.
 
 -- Workflow
 saved_query         (id, workspace_id, created_by, name, prompt, sql, tags, is_template)
@@ -1249,18 +1250,22 @@ This section reflects the current repository state. Its conclusions are already 
 
 ### Current repo gap against this plan
 
-- The codebase is still effectively single-tenant. There are no `organization`, `workspace`, or `membership` models, and no gateway-level tenant context injection.
-- The current backend does not yet implement an enterprise audit vault. Query history exists, but it is not an append-only, chain-hashed audit system with compliance semantics.
-- SQL enforcement is not yet a policy engine. The current validation layer is still lightweight and does not enforce AST-based workspace policies, approval routing, or role-aware restrictions.
-- The frontend includes working product surfaces, but the architecture is still pre-enterprise. The chat flow is still concentrated in [client/src/views/Chat.tsx](/home/admin/Desktop/speakql/client/src/views/Chat.tsx), and the admin/catalog/workflow structure in this document does not yet exist.
+- Phase 1 (Tenancy) and Phase 2 (Policy) are structurally complete.
+- Phase 3 (Trust Surfaces) foundations are mostly completed:
+    - Append-only audit vault with SHA-256 chain-hashing is implemented.
+    - PII masking, explainability payloads, and risk scoring are in place.
+    - Governance routes for policy, sensitivity, audit, and health are available.
+    - Approval workflow is workspace-scoped.
+    - Governed export (CSV/XLSX) is implemented and audited.
+- MCP trust-model migration is partially complete: requests execute through the governed pipeline, but credential isolation is still database-key oriented.
+- Frontend trust surfaces (Admin Console) are being redesigned under v2 specification to move from a chat-only view to a governed workbench.
 
 ### Why Phase 1 comes first
 
-- Multi-tenancy is not an optional add-on here. Policies, approvals, audit, catalog, connectors, and billing all depend on `org_id` and `workspace_id` being first-class in the data model.
-- Audit correctness depends on request context. If request IDs, workspace IDs, and user role context are not threaded through the system now, every later governance feature will require invasive rewrites.
-- Policy enforcement without the correct tenant and role model is structurally weak. You can build a parser first, but it will not answer the core enterprise question: "who is allowed to do what, in which workspace, under which controls?"
-- Frontend enterprise surfaces should come after backend shape stabilises. Building admin and workflow UI before the tenancy, audit, and policy schema settles will create churn and rework.
-- The "do not build UI in Phase 1" warning is not just about discipline. Any admin or workflow UI built before the tenant and policy schema stabilises will bake incorrect assumptions into routing, data fetching, cache keys, form payloads, and state management. Those assumptions will then be expensive to unwind once `org_id`, `workspace_id`, RBAC, and policy semantics become first-class.
+- COMPLETED: Multi-tenancy is first-class. Policies, approvals, audit, catalog, and connectors depend on `workspace_id`.
+- COMPLETED: Audit correctness depends on request context. Request IDs, workspace IDs, and user roles are threaded through the system.
+- COMPLETED: Policy enforcement is AST-based and role-aware.
+- NEXT: Frontend trust surfaces (Phase 3 UI) are being implemented under the v2 Workbench design.
 
 ### MCP migration risk in the current codebase
 

@@ -7,6 +7,10 @@ if TYPE_CHECKING:
     from .query_model import QueryHistory
     from .tenant_model import Workspace
 
+# Explicit import for SQLModel mapper to resolve relationships during combined test runs
+from .user_model import User
+from .tenant_model import Workspace
+
 class UserDatabase(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", index=True)
@@ -20,6 +24,11 @@ class UserDatabase(SQLModel, table=True):
     db_name: str
     mcp_api_key: Optional[str] = Field(default=None, index=True, unique=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Health status persistence
+    last_health_status: Optional[str] = None
+    last_health_check_at: Optional[datetime] = None
+    health_failure_summary: Optional[str] = None
 
     owner: "User" = Relationship(back_populates="databases")
     workspace: "Workspace" = Relationship(back_populates="databases")

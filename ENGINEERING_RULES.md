@@ -213,6 +213,8 @@ If a dependency crosses layers in the wrong direction, that design should be tre
 - Sensitive values such as passwords, raw tokens, decrypted secrets, and credentials must never appear in logs.
 - SQL logging must be disabled by default outside explicit debug mode.
 - Audit event writing must go through one encapsulated service path.
+- Export events must be audited through the same canonical path as query execution events.
+- Audit logs must describe masking, approval, denial, and export decisions without storing secrets or raw credential material.
 
 ## 11. Auth and RBAC Rules
 
@@ -222,6 +224,16 @@ If a dependency crosses layers in the wrong direction, that design should be tre
 - Sensitive actions must verify current authorization state server-side.
 - Role and permission logic must live in reusable guards or services, not be scattered across route handlers.
 - MCP authentication must be workspace-aware and auditable.
+- Masking eligibility and sensitivity access must be enforced server-side, not inferred from frontend role hints.
+
+## 11A. Trust Surface Rules
+
+- Explainability, masking, confidence scoring, and export control are backend trust features, not frontend-only presentation features.
+- Query execution, result masking, explainability metadata, and export generation must share one governed service path wherever practical.
+- Routers must not implement ad hoc masking or ad hoc CSV/XLSX/PDF generation logic.
+- Sensitivity rules, masking strategies, and trust warnings must be represented with explicit typed schemas and service contracts.
+- Web and MCP surfaces must not diverge in masking or denial semantics without an explicit product decision.
+- Trust metadata must be additive; it must not bypass or weaken Phase 2 authorization and policy enforcement.
 
 ## 12. Frontend Separation Rules
 
@@ -230,6 +242,7 @@ If a dependency crosses layers in the wrong direction, that design should be tre
 - Admin, workflow, and catalog surfaces should live in their own route areas.
 - Frontend state shape must not depend on backend shortcuts known to be temporary.
 - Auth and active workspace context should each have one clear source of truth.
+- Admin trust surfaces should be split by domain: policy, sensitivity, audit, connector health, and exports.
 
 ## 13. What To Avoid
 
@@ -240,6 +253,9 @@ If a dependency crosses layers in the wrong direction, that design should be tre
 - No feature module owning its own logging or DB setup.
 - No database-only trust model for MCP in enterprise mode.
 - No premature admin UI before tenancy and request-context foundations are in place.
+- No masking logic buried in React components.
+- No export endpoints that bypass governed query and masking services.
+- No confidence or explainability payloads assembled from loosely coupled route-local heuristics.
 
 ## 14. Deferred Concerns
 

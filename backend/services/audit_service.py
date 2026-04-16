@@ -2,6 +2,7 @@ from repositories.audit_repository import AuditRepository
 from models.audit_model import AuditEvent
 from core.request_context import get_request_context
 from typing import Optional, Dict, Any
+from datetime import datetime
 
 class AuditService:
     def __init__(self, audit_repo: AuditRepository):
@@ -27,3 +28,22 @@ class AuditService:
             details=details or {}
         )
         return await self.audit_repo.create(event)
+
+    async def verify_chain(self, workspace_id: int) -> bool:
+        return await self.audit_repo.verify_chain(workspace_id)
+
+    async def get_events(
+        self,
+        workspace_id: int,
+        skip: int = 0,
+        limit: int = 100,
+        event_type: Optional[str] = None,
+        user_id: Optional[int] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        governance_only: bool = False,
+        category: Optional[str] = None
+    ):
+        return await self.audit_repo.list_by_workspace(
+            workspace_id, skip, limit, event_type, user_id, start_date, end_date, governance_only, category
+        )

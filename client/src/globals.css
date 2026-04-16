@@ -1,0 +1,162 @@
+ @tailwind base;
+ @tailwind components;
+ @tailwind utilities;
+
+ @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@400;500&display=swap');
+
+/* ─── DARK THEME ─────────────────────────────────────── */
+html[data-theme="dark"] {
+
+  /* Backgrounds — 5 levels of depth */
+  --bg0: #0C0C0A;   /* page / outermost */
+  --bg1: #111110;   /* topbar, rail, panel headers */
+  --bg2: #171715;   /* panel bodies */
+  --bg3: #1E1E1B;   /* hover states, inset areas */
+  --bg4: #252522;   /* active states, deepest inset */
+
+  /* Borders */
+  --bd:  rgba(255, 255, 255, 0.07);   /* default dividers */
+  --bd2: rgba(255, 255, 255, 0.12);   /* card edges, input borders */
+  --bd3: rgba(255, 255, 255, 0.20);   /* focused inputs */
+
+  /* Text */
+  --t1: #F0EDE6;   /* primary readable text */
+  --t2: #9A9690;   /* secondary — labels, meta */
+  --t3: #5A5750;   /* tertiary — hints, line numbers */
+  --t4: #2E2E2A;   /* quaternary — very dim, ranks */
+
+  /* Brand accent — amber gold */
+  --amber:    #C8A84B;
+  --amber-bg: rgba(200, 168, 75, 0.12);
+  --amber-bd: rgba(200, 168, 75, 0.28);
+  --amber-t:  #C8A84B;   /* amber text on dark bg */
+
+  /* Semantic — red (deny, error, critical) */
+  --red:    #C8503C;
+  --red-bg: rgba(200, 80,  60,  0.12);
+  --red-bd: rgba(200, 80,  60,  0.28);
+  --red-t:  #C8503C;
+
+  /* Semantic — green (allow, success, low risk) */
+  --green:    #5CA870;
+  --green-bg: rgba(92,  168, 112, 0.12);
+  --green-bd: rgba(92,  168, 112, 0.28);
+  --green-t:  #5CA870;
+
+  /* Semantic — blue (info, table names) */
+  --blue:    #4A80C0;
+  --blue-bg: rgba(74,  128, 192, 0.12);
+  --blue-bd: rgba(74,  128, 192, 0.28);
+  --blue-t:  #4A80C0;
+
+  /* Semantic — purple (masked, PII) */
+  --purple:    #9A60C8;
+  --purple-bg: rgba(154, 96,  200, 0.12);
+  --purple-bd: rgba(154, 96,  200, 0.28);
+  --purple-t:  #9A60C8;
+
+  /* SQL syntax highlighting */
+  --sql-keyword:  #C8503C;   /* SELECT, FROM, WHERE, JOIN... */
+  --sql-table:    #4A80C0;   /* table names */
+  --sql-string:   #5CA870;   /* 'string literals' */
+  --sql-function: #9A60C8;   /* SUM(), COUNT()... */
+  --sql-linenum:  #2E2E2A;   /* line number gutter */
+
+  /* Layout */
+  --topbar-h:  38px;
+  --rail-w:    36px;
+  --prompt-h:  46px;
+}
+
+/* ─── LIGHT THEME ────────────────────────────────────── */
+html[data-theme="light"] {
+
+  --bg0: #F5F2EC;
+  --bg1: #EDE9E0;
+  --bg2: #FDFAF5;
+  --bg3: #F0EDE5;
+  --bg4: #E8E4DA;
+
+  --bd:  rgba(0, 0, 0, 0.09);
+  --bd2: rgba(0, 0, 0, 0.16);
+  --bd3: rgba(0, 0, 0, 0.28);
+
+  --t1: #1A1A16;
+  --t2: #6A6660;
+  --t3: #A0998F;
+  --t4: #C8C4BC;
+
+  --amber:    #8A6A10;
+  --amber-bg: rgba(138, 106, 16,  0.10);
+  --amber-bd: rgba(138, 106, 16,  0.30);
+  --amber-t:  #8A6A10;
+
+  --red:    #8A3020;
+  --red-bg: rgba(138, 48,  32,  0.08);
+  --red-bd: rgba(138, 48,  32,  0.25);
+  --red-t:  #8A3020;
+
+  --green:    #2A6B3A;
+  --green-bg: rgba(42,  107, 58,  0.08);
+  --green-bd: rgba(42,  107, 58,  0.25);
+  --green-t:  #2A6B3A;
+
+  --blue:    #1A4A7A;
+  --blue-bg: rgba(26,  74,  122, 0.08);
+  --blue-bd: rgba(26,  74,  122, 0.25);
+  --blue-t:  #1A4A7A;
+
+  --purple:    #5A2A8A;
+  --purple-bg: rgba(90,  42,  138, 0.08);
+  --purple-bd: rgba(90,  42,  138, 0.25);
+  --purple-t:  #5A2A8A;
+
+  --sql-keyword:  #8A3020;
+  --sql-table:    #1A4A7A;
+  --sql-string:   #2A6B3A;
+  --sql-function: #5A2A8A;
+  --sql-linenum:  #C8C4BC;
+
+  --topbar-h:  38px;
+  --rail-w:    36px;
+  --prompt-h:  46px;
+}
+
+/* ─── GLOBAL RESETS ──────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg0);
+  color: var(--t1);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Theme transition — smooth but not slow */
+html {
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+/* ─── SCROLLBARS ─────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bd2); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--bd3); }
+
+/* ─── KEYFRAMES ──────────────────────────────────────── */
+ @keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}

@@ -19,4 +19,8 @@ class AuditEvent(SQLModel, table=True):
     # Store dynamic event details in a JSON column
     details: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
     
+    # Tamper-evident chain-hash
+    hash: Optional[str] = Field(default=None, index=True)
+    previous_hash: Optional[str] = Field(default=None, index=True)
+    
     created_at: datetime = Field(default_factory=datetime.utcnow)

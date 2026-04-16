@@ -7,12 +7,14 @@ from core.request_context import get_request_context
 from utils.db_connection import validate_database_connection
 from utils.encryption import encrypt_password, decrypt_password
 from schemas.db_schemas import UserDatabaseCreate, UserDatabaseUpdate
-from typing import List, Optional
+from typing import List, Optional, Any
+from utils.postgres_tools import get_postgresql_tools
 
 class DatabaseService:
-    def __init__(self, db_repo: DatabaseRepository, audit_service: AuditService):
+    def __init__(self, db_repo: DatabaseRepository, audit_service: AuditService, catalog_service: Optional[Any] = None):
         self.db_repo = db_repo
         self.audit_service = audit_service
+        self.catalog_service = catalog_service
 
     async def add_database(self, user_id: int, data: UserDatabaseCreate) -> UserDatabase:
         context = get_request_context()
@@ -43,7 +45,22 @@ class DatabaseService:
             user_id=user_id,
             details={"database_id": db.id, "db_name": db.db_name}
         )
+        
+        # Trigger catalog refresh
+        if self.catalog_service:
+            await self.refresh_catalog(db.id)
+            
         return db
+
+    async def refresh_catalog(self, db_id: int):
+        """Discovers tables and populates draft catalog entries."""
+        db = await self.db_repo.get_by_id(db_id)
+        if not db or not self.catalog_service:
+            return
+            
+        tools = get_postgresql_tools(db)
+        tables = await tools.list_tables()
+        await self.catalog_service.generate_draft_catalog(db_id, tables)
 
     async def get_databases(self, user_id: int) -> List[UserDatabase]:
         # Filter by active workspace context
@@ -130,8 +147,9 @@ class DatabaseService:
         # Log to audit vault too
         audit_event_type = "SQL_GENERATED" if event_type == "generation" else "SQL_EXECUTED"
         if not success and error:
-            # If denied by safety or other reason
-            if "safety" in error.lower() or "permission" in error.lower():
+            # If denied by safety, policy or other reason
+            err_lower = error.lower()
+            if any(term in err_lower for term in ["safety", "permission", "policy denied", "blocked"]):
                 audit_event_type = "EXECUTION_DENIED"
 
         await self.audit_service.record_event(

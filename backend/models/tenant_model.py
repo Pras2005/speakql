@@ -6,6 +6,7 @@ from enum import Enum
 if TYPE_CHECKING:
     from .user_model import User
     from .db_model import UserDatabase
+    from .mcp_model import WorkspaceApiKey
 
 class MembershipRole(str, Enum):
     VIEWER = "viewer"
@@ -29,6 +30,9 @@ class Workspace(SQLModel, table=True):
     organization: Organization = Relationship(back_populates="workspaces")
     memberships: List["Membership"] = Relationship(back_populates="workspace")
     databases: List["UserDatabase"] = Relationship(back_populates="workspace")
+    api_keys: List["WorkspaceApiKey"] = Relationship(
+        sa_relationship_kwargs={"backref": "workspace", "cascade": "all, delete-orphan"}
+    )
 
 class Membership(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -40,3 +44,4 @@ class Membership(SQLModel, table=True):
 
     workspace: Workspace = Relationship(back_populates="memberships")
     user: "User" = Relationship(back_populates="memberships")
+from .mcp_model import WorkspaceApiKey

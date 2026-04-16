@@ -19,6 +19,10 @@ class GeminiProvider(LLMProvider):
         genai.configure(api_key=settings.GEMINI_API_KEY)
         self.model = genai.GenerativeModel(model_name)
 
+    async def generate_content(self, prompt: str) -> str:
+        response = await self.model.generate_content_async(prompt)
+        return response.text
+
 class OpenAICompatibleProvider(LLMProvider):
     def __init__(self, model_name: str, base_url: Optional[str] = None, api_key: Optional[str] = None):
         self.client = OpenAI(
@@ -38,12 +42,13 @@ class OpenAICompatibleProvider(LLMProvider):
         return await asyncio.to_thread(sync_call)
 
 class DatabaseAgent:
-    def __init__(self, user_db, ai_provider: LLMProvider, debug=True):
+    def __init__(self, user_db, ai_provider: LLMProvider, debug=True, semantic_context: Optional[str] = None):
         """Initialize the DatabaseAgent."""
         self.debug = debug
         self.tools = get_postgresql_tools(user_db)
         self.ai_provider = ai_provider
         self.max_steps = 6
+        self.semantic_context = semantic_context or ""
 
     def _clean_sql(self, sql: str) -> str:
         sql = sql.strip()
@@ -116,12 +121,9 @@ class DatabaseAgent:
         
         try:
             full_schema = await self.tools.list_schemas_and_tables()
-            
-            # Count total tables
             total_tables = sum(len(tables) for tables in full_schema.values())
             
             if total_tables > 100:
-                # Filter tables based on keywords in the user prompt for huge databases
                 keywords = set(user_prompt.lower().split())
                 filtered_schema = {}
                 for schema, tables in full_schema.items():
@@ -130,10 +132,10 @@ class DatabaseAgent:
                         if any(kw in t.lower() for kw in keywords) or "public" in schema.lower()
                     ]
                     if relevant_tables:
-                        filtered_schema[schema] = relevant_tables[:20] # Limit to top 20 matches per schema
+                        filtered_schema[schema] = relevant_tables[:20]
                 
                 schema_summary_text = json.dumps(filtered_schema, indent=2)
-                schema_summary_text += f"\n\nNOTE: Database is large ({total_tables} tables). Only showing potentially relevant tables. Use list_tables/describe_table if needed."
+                schema_summary_text += f"\n\nNOTE: Database is large ({total_tables} tables). Only showing potentially relevant tables."
             else:
                 schema_summary_text = json.dumps(full_schema, indent=2)
                 
@@ -142,20 +144,18 @@ class DatabaseAgent:
 
         return f"""You are a PostgreSQL ReAct agent.
 
-Your job is to inspect the database step by step and then return the best SQL for the user's request.
-
-Available tables (subset):
+Available tables:
 {schema_summary_text}
+
+Semantic Knowledge (Glossary & Metrics):
+{self.semantic_context}
 
 Available tools:
 {self._tool_instructions()}
 
 Rules:
 - Think step by step, but return only one JSON object.
-- Use tools only when you need more schema or data context.
-- Prefer the public schema unless observations show the relevant table is elsewhere.
-- Never invent table names or column names.
-- When you are ready, respond with a final SQL query.
+- When you are ready, respond with a final SQL query AND a brief explanation of why you wrote it.
 - Output must be valid JSON and match exactly one of these shapes:
 
 {{
@@ -168,7 +168,8 @@ or
 
 {{
   "thought": "short reasoning",
-  "final_sql": "SELECT ..."
+  "final_sql": "SELECT ...",
+  "explanation": "Brief natural language explanation of the SQL"
 }}
 
 User request:
@@ -180,63 +181,53 @@ Previous steps:
 
     async def _run_reasoning_step(self, user_prompt: str, steps: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         react_prompt = await self._build_react_prompt(user_prompt, steps)
-
         if self.debug:
             print(f"Running ReAct step {len(steps) + 1}")
-
         response_text = await self.ai_provider.generate_content(react_prompt)
-        payload = self._extract_json_payload(response_text)
+        return self._extract_json_payload(response_text)
 
-        if self.debug:
-            print(f"Model raw response: {response_text}")
-
-        return payload
-
-    async def process_request(self, prompt: str) -> str:
-        """Iteratively inspect the database and then generate SQL."""
+    async def process_request(self, prompt: str) -> Dict[str, Any]:
+        """Iteratively inspect the database and then generate SQL with explanation."""
         steps: List[Dict[str, Any]] = []
 
         try:
             for _ in range(self.max_steps):
                 payload = await self._run_reasoning_step(prompt, steps)
                 if not payload:
-                    print("Model did not return valid JSON")
-                    return None
+                    continue
 
                 if payload.get("final_sql"):
-                    return self._clean_sql(payload["final_sql"])
+                    return {
+                        "sql": self._clean_sql(payload["final_sql"]),
+                        "explanation": payload.get("explanation") or payload.get("thought", "Generated based on schema matching.")
+                    }
 
                 action = payload.get("action")
                 action_input = payload.get("action_input") or {}
                 observation = await self._handle_function_call(action, action_input)
-                step_record = {
+                steps.append({
                     "thought": payload.get("thought", ""),
                     "action": action,
                     "action_input": action_input,
                     "observation": observation,
+                })
+
+            # If we reached max_steps, try one final direct call
+            final_prompt = f"""User request: {prompt}
+Reasoning trace: {json.dumps(steps, indent=2, default=str)}
+
+Return a JSON object: {{"final_sql": "...", "explanation": "..."}}"""
+            response_text = await self.ai_provider.generate_content(final_prompt)
+            payload = self._extract_json_payload(response_text)
+            if payload and payload.get("final_sql"):
+                return {
+                    "sql": self._clean_sql(payload["final_sql"]),
+                    "explanation": payload.get("explanation") or "Final attempt generation."
                 }
-                steps.append(step_record)
 
-                if self.debug:
-                    print(f"Step observation: {json.dumps(step_record, indent=2, default=str)}")
-
-            final_attempt_prompt = f"""Based on the reasoning trace below, return only the final PostgreSQL SQL query.
-
-User request:
-{prompt}
-
-Reasoning trace:
-{json.dumps(steps, indent=2, default=str)}
-"""
-            response_text = await self.ai_provider.generate_content(final_attempt_prompt)
-            if response_text:
-                return self._clean_sql(response_text)
-
-            print("No valid text response from AI")
             return None
         except Exception as e:
-            print(f"Error in process_request: {e}")
-            import traceback
-
-            traceback.print_exc()
+            if self.debug:
+                import traceback
+                traceback.print_exc()
             return None

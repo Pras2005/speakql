@@ -8,7 +8,12 @@ class DatabaseRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_by_id(self, db_id: int) -> Optional[UserDatabase]:
+    async def get_by_id(self, db_id: int, workspace_id: Optional[int] = None) -> Optional[UserDatabase]:
+        if workspace_id:
+            result = await self.session.execute(
+                select(UserDatabase).where(UserDatabase.id == db_id, UserDatabase.workspace_id == workspace_id)
+            )
+            return result.scalar_one_or_none()
         return await self.session.get(UserDatabase, db_id)
 
     async def list_by_workspace(self, workspace_id: int) -> List[UserDatabase]:
@@ -21,6 +26,12 @@ class DatabaseRepository:
         # Legacy/Compatibility helper
         result = await self.session.execute(
             select(UserDatabase).where(UserDatabase.user_id == user_id)
+        )
+        return result.scalars().all()
+
+    async def list_all_active(self) -> List[UserDatabase]:
+        result = await self.session.execute(
+            select(UserDatabase)
         )
         return result.scalars().all()
 
