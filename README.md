@@ -1,117 +1,79 @@
-# speakql
+# SpeakQL
 
-## Table of Contents
+SpeakQL is a full-stack platform that enables natural language querying of databases. It bridges the gap between conversational AI and SQL databases by providing a dedicated Model Context Protocol (MCP) server alongside a modern web interface. 
 
-- [Deep Dive Description](#deep-dive-description)
-- [Project Structure](#project-structure)
-- [Prerequisites](#prerequisites)
-- [Installation & Setup](#installation--setup)
-- [Usage / Running Locally](#usage--running-locally)
+## Core Features & Architecture
 
-## Deep Dive Description
+- **Natural Language to SQL**: Core engine translates user prompts into executable SQL queries via `DatabaseAgent`.
+- **MCP Server Integration**: Features an integrated Model Context Protocol server (`backend/mcp_server.py`) exposing tools (`ask_database`, `get_schema`) for external AI assistants to interact with registered databases securely.
+- **Connection & Credential Management**: Users can register and manage multiple database connections securely. Includes MCP API key rotation for granting controlled access to the databases.
+- **Query History Auditing**: Maintains detailed logs of all natural language prompts, generated SQL, execution status, and timestamps.
+- **Full-Stack Stack**: 
+  - **Backend**: FastAPI with asynchronous SQLAlchemy (Alembic for migrations). Exposes REST endpoints for the client and SSE/HTTP endpoints for the MCP Server.
+  - **Client**: React frontend configured with Vite and TypeScript for managing connections and history.
 
-speakql is a robust software engineering project carefully architected to provide scalable and efficient functionality. Built primarily in Python, this repository likely leverages modern frameworks to deliver high-performance backend processing, data analysis, or scripting utilities. Dependencies are managed via `requirements.txt`, ensuring reproducible environments. The application entry point orchestrates the lifecycle and initializes the core services. 
+## Prerequisites
 
-The core functionality involves processing inputs, managing state or data persistence, and delivering outputs or serving API endpoints as dictated by the specific modular implementations found within the file tree. By breaking down the logic into distinct modules, the system ensures that each component handles a single responsibility, paving the way for easier testing and future feature expansions.
+- **Python 3.10+**
+- **Node.js 18+** & **pnpm**
+- **PostgreSQL** or equivalent RDBMS for the application backend
+
+## Installation & Setup
+
+Both the backend and client can be orchestrated using Docker Compose, or run locally.
+
+### Using Docker
+```bash
+docker-compose up --build
+```
+
+### Local Development Setup
+
+**Backend**:
+1. Navigate to the `backend/` directory.
+2. Create a virtual environment and activate it.
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+4. Run Alembic migrations to set up the DB:
+   ```bash
+   alembic upgrade head
+   ```
+5. Start the backend application:
+   ```bash
+   uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+   ```
+
+**Client**:
+1. Navigate to the `client/` directory.
+2. Install dependencies:
+   ```bash
+   pnpm install
+   ```
+3. Start the Vite development server:
+   ```bash
+   pnpm run dev
+   ```
+
+## Usage
+
+- **Client Application**: Access the UI at `http://localhost:5173` to sign up, add your target databases, and view query history.
+- **MCP Server**: The MCP server is mounted at `/mcp`. Provide your generated `X-SpeakQL-API-Key` to your compatible AI client (like Claude Desktop) to allow the AI to directly query your databases using natural language.
 
 ## Project Structure
 
 ```text
-speakql/
-├── .gitignore
-├── README.md
-├── backend
-│   ├── .dockerignore
-│   ├── .gitignore
-│   ├── Dockerfile
-│   ├── alembic
-│   │   ├── README
-│   │   ├── env.py
-│   │   ├── script.py.mako
-│   │   └── versions
-│   │       ├── 25b3e40c76f1_add_cascade_delete_to_query_history.py
-│   │       └── a660b8aeed69_add_cascade_delete_to_query_history.py
-│   ├── alembic.ini
-│   ├── auth
-│   │   ├── auth_bearer.py
-│   │   └── auth_handler.py
-│   ├── crud
-│   │   ├── __init__.py
-│   │   └── db_crud.py
-│   ├── database.py
-│   ├── main.py
-│   ├── mcp_server.py
-│   ├── models
-│   │   ├── db_model.py
-│   │   ├── query_model.py
-│   │   └── user_model.py
-│   ├── requirements.txt
-│   ├── routers
-│   │   └── agent_routes.py
-│   ├── schemas
-│   │   ├── agent_schemas.py
-│   │   ├── db_schemas.py
-│   │   ├── query_schemas.py
-│   │   └── user_schemas.py
-│   └── utils
-│       ├── __init__.py
-│       ├── agent.py
-│       ├── db_connection.py
-│       ├── declarations.py
-│       ├── encryption.py
-│       ├── postgres_tools.py
-│       ├── sql_safety.py
-│       ├── utils.py
-│       └── visualizer.py
-├── client
-│   ├── .dockerignore
-│   ├── .gitignore
-│   ├── Dockerfile
-│   ├── README.md
-... (truncated for brevity)
+.
+├── backend/                  # FastAPI Application
+│   ├── main.py               # Core REST API (Auth, User Databases, History)
+│   ├── mcp_server.py         # Model Context Protocol endpoints and tools
+│   ├── auth/                 # JWT Authentication logic
+│   ├── crud/                 # Database operation wrappers
+│   ├── utils/agent.py        # Logic for NL to SQL generation and execution
+│   └── alembic/              # Database migration definitions
+├── client/                   # Vite + React Frontend
+│   ├── src/                  # TS Components and Pages
+│   └── package.json          # Node dependencies
+└── docker-compose.yml        # Orchestration configuration
 ```
-
-## Prerequisites
-
-Before you begin, ensure you have met the following requirements:
-- Python 3.8+
-- pip (Python package installer)
-- Virtualenv (recommended)
-- Node.js (v14 or higher)
-- npm or yarn
-- Git
-
-## Installation & Setup
-
-Follow these step-by-step instructions to get a development environment running:
-
-1. **Clone the repository:**
-   ```bash
-   git clone git@github.com:Pras2005/speakql.git
-   cd speakql
-   ```
-
-2. **Set up a virtual environment:**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-   ```
-
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Environment Variables:**
-   If there is a `.env.example` file, copy it to `.env` and configure the necessary keys:
-   ```bash
-   cp .env.example .env
-   ```
-
-## Usage / Running Locally
-
-Start the application by running the main entry script:
-```bash
-python main.py
-```
-*(If the entry point is different, replace `main.py` with the appropriate script like `app.py` or run via Uvicorn/Flask)*
