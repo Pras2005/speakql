@@ -2,6 +2,7 @@ from typing import List, Optional, Dict, Any
 from models.report_model import Report, ReportRun
 from repositories.report_repository import ReportRepository, ReportRunRepository
 from services.workflow_service import WorkflowService
+from services.audit_service import AuditService
 from core.request_context import get_request_context, RequestContext, set_request_context
 from datetime import datetime
 
@@ -22,16 +23,20 @@ class ReportService:
         self, 
         name: str, 
         saved_query_id: int, 
+        database_id: int,
         schedule_cron: str, 
-        delivery_config: Dict[str, Any]
+        delivery_config: Dict[str, Any],
+        is_enabled: bool = True
     ) -> Report:
         context = get_request_context()
         report = Report(
             workspace_id=context.workspace_id,
+            database_id=database_id,
             name=name,
             saved_query_id=saved_query_id,
             schedule_cron=schedule_cron,
-            delivery_config=delivery_config
+            delivery_config=delivery_config,
+            is_enabled=is_enabled
         )
         saved = await self.report_repo.create(report)
         await self.audit_service.record_event(
@@ -41,11 +46,33 @@ class ReportService:
         )
         return saved
 
+    async def update_report(
+        self,
+        report_id: int,
+        update_data: Dict[str, Any]
+    ) -> Report:
+        context = get_request_context()
+        report = await self.report_repo.get_by_id(report_id, context.workspace_id)
+        if not report:
+            raise ValueError("Report not found or access denied")
+        
+        for key, value in update_data.items():
+            if value is not None:
+                setattr(report, key, value)
+        
+        updated = await self.report_repo.update(report)
+        await self.audit_service.record_event(
+            event_type="REPORT_UPDATED",
+            user_id=context.user_id,
+            details={"report_id": updated.id, "name": updated.name}
+        )
+        return updated
+
     async def list_reports(self) -> List[Report]:
         context = get_request_context()
         return await self.report_repo.list_by_workspace(context.workspace_id)
 
-    async def run_pending_reports(self, db_id: int, agent_tools: Any):
+    async def run_pending_reports(self, db_repo: Any):
         """Finds and runs all enabled reports that are due for execution."""
         # This would normally be filtered by cron logic
         # For this implementation, we run all enabled reports that haven't ran in the last hour
@@ -72,7 +99,16 @@ class ReportService:
             set_request_context(ctx)
             
             try:
-                await self.run_report(report.id, db_id, agent_tools)
+                user_db = await db_repo.get_by_id(report.database_id)
+                if not user_db:
+                    continue
+                    
+                from utils.agent import DatabaseAgent
+                from services.ai_service import AIService
+                ai_provider = AIService.get_provider("gemini")
+                agent = DatabaseAgent(user_db=user_db, ai_provider=ai_provider)
+                
+                await self.run_report(report.id, report.database_id, agent.tools)
             except Exception as e:
                 print(f"Failed to run scheduled report {report.id}: {e}")
 
@@ -110,11 +146,8 @@ class ReportService:
             audit_event_id=result.get("query_id") # Reusing query_id as audit ref
         )
         
-        # Simulate delivery
-        delivery_outcome = {"delivered": status == "success"}
-        if report.delivery_config.get("email"):
-            delivery_outcome["email"] = "sent" if status == "success" else "failed"
-            
+        # Real-ish delivery logic
+        delivery_outcome = await self._deliver_report(report, status)
         run.delivery_outcome = delivery_outcome
         
         saved_run = await self.run_repo.create(run)
@@ -131,7 +164,30 @@ class ReportService:
             }
         )
         
+        # Update report last_ran_at
         report.last_ran_at = datetime.utcnow()
         await self.report_repo.update(report)
         
         return saved_run
+
+    async def _deliver_report(self, report: Report, status: str) -> Dict[str, Any]:
+        outcome = {"delivered": status == "success"}
+        config = report.delivery_config
+        
+        if status != "success":
+            return {"delivered": False, "error": "Query execution failed"}
+
+        if config.get("email"):
+            # Simulate email delivery
+            outcome["email"] = "sent"
+            
+        if config.get("slack_channel"):
+            # Simulate Slack delivery
+            # In a real app, this would use a Slack client
+            outcome["slack"] = f"posted_to_{config['slack_channel']}"
+            
+        if config.get("webhook_url"):
+            # Simulate webhook delivery
+            outcome["webhook"] = "called"
+            
+        return outcome

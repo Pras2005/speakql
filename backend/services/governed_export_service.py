@@ -3,6 +3,7 @@ from services.export_service import ExportService
 from services.audit_service import AuditService
 from core.request_context import get_request_context
 from typing import Dict, Any, Optional
+from models.tenant_model import DatabaseAccessLevel
 
 class GovernedExportService:
     def __init__(
@@ -48,7 +49,8 @@ class GovernedExportService:
             user_id=user_id,
             sql=sql,
             original_prompt=original_prompt,
-            agent_tools=agent_tools
+            agent_tools=agent_tools,
+            required_access_level=DatabaseAccessLevel.EXPORT,
         )
         
         if result.get("status") != "success":

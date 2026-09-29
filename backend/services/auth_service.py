@@ -56,18 +56,23 @@ class AuthService:
         """
         payload = {
             "sub": str(user.id),
-            "token_version": user.token_version
+            "token_version": user.token_version,
+            "username": user.username,
         }
         
         # If workspace context is provided, enrich the token
         if workspace_id:
             membership = await self.tenant_repo.get_membership(user.id, workspace_id)
             if membership:
+                workspace = await self.tenant_repo.get_workspace_by_id(membership.workspace_id)
+                organization = await self.tenant_repo.get_org_by_id(membership.org_id)
                 payload.update({
                     "org_id": membership.org_id,
                     "workspace_id": membership.workspace_id,
                     "membership_id": membership.id,
-                    "role": membership.role
+                    "role": membership.role,
+                    "workspace_name": workspace.name if workspace else None,
+                    "org_name": organization.name if organization else None,
                 })
         
         return create_access_token(payload)

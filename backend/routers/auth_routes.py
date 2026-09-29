@@ -85,9 +85,11 @@ async def read_current_user(
         raise HTTPException(status_code=404, detail="User not found")
     
     return {
-        "username": user.username, 
+        "username": token_data.get("username", user.username), 
         "user_id": user.id,
         "org_id": token_data.get("org_id"),
+        "org_name": token_data.get("org_name"),
         "workspace_id": token_data.get("workspace_id"),
+        "workspace_name": token_data.get("workspace_name"),
         "role": token_data.get("role")
     }

@@ -71,18 +71,10 @@ async def report_scheduler_task():
                 
                 r_repo = ReportRepository(session)
                 rr_repo = ReportRunRepository(session)
-                report_service = ReportService(r_repo, rr_repo, wf_service)
+                report_service = ReportService(r_repo, rr_repo, wf_service, audit_service)
                 
-                # Check for enabled reports (we need a db_id for the execution)
-                # This is a simplification; a real system would have scheduled jobs per database
-                all_dbs = await db_repo.list_all_active() # Need this method
-                for db in all_dbs:
-                    from utils.agent import DatabaseAgent
-                    from services.ai_service import AIService
-                    ai_provider = AIService.get_provider("gemini")
-                    agent = DatabaseAgent(user_db=db, ai_provider=ai_provider)
-                    
-                    await report_service.run_pending_reports(db.id, agent)
+                # Check for enabled reports
+                await report_service.run_pending_reports(db_repo)
                     
                 break # Only one pass per session cycle
                 

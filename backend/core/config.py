@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     
     # AI Providers
     GEMINI_API_KEY: Optional[str] = None
+    GEMINI_MODEL: str = "gemini-2.5-flash"
     LOCAL_AI_BASE_URL: str = "http://localhost:11434/v1"
     LOCAL_AI_API_KEY: str = "ollama"
     OPENAI_API_KEY: Optional[str] = None

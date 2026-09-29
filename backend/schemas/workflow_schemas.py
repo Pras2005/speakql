@@ -41,6 +41,9 @@ class SavedQueryResponse(BaseModel):
 class QueryCommentCreate(BaseModel):
     body: str
 
+class QueryCommentUpdate(BaseModel):
+    body: str
+
 class QueryCommentResponse(BaseModel):
     id: int
     user_id: int
@@ -55,10 +58,19 @@ class SavedQueryReplayRequest(BaseModel):
     db_id: int
     bypass_approval: bool = False
 
+class SavedQueryRejectRequest(BaseModel):
+    reason: str
+
 class SQLDiffResponse(BaseModel):
     added_tables: List[str]
     removed_tables: List[str]
     clause_changes: Dict[str, bool]
+    error: Optional[str] = None
+
+class ResultDiffResponse(BaseModel):
+    row_count_diff: Optional[int] = None
+    executed_at_diff_seconds: Optional[float] = None
+    snapshot_drift: Optional[bool] = None
     error: Optional[str] = None
 
 class SaveFromHistoryRequest(BaseModel):

@@ -10,7 +10,7 @@ from models.query_model import QueryHistory
 from services.policy_service import PolicyService
 from services.risk_service import RiskScoringService
 from services.database_service import DatabaseService
-from models.tenant_model import Membership, Organization, Workspace
+from models.tenant_model import Membership, Organization, Workspace, DatabaseAccessLevel
 from utils.sql_safety import validate_sql_safety, extract_tables
 from models.policy_model import Policy
 from models.user_model import User
@@ -161,6 +161,68 @@ async def test_denied_query_writes_execution_denied_audit():
     assert audit_service.calls[0]["user_id"] == 7
     assert audit_service.calls[0]["details"]["database_id"] == 17
     assert "Policy Denied" in audit_service.calls[0]["details"]["error"]
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_get_databases_filters_by_grants():
+    class FakeDbRepo:
+        async def list_by_ids(self, workspace_id, database_ids):
+            return [UserDatabase(id=db_id, user_id=1, org_id=11, workspace_id=workspace_id, db_password_encrypted="x", db_name=f"db_{db_id}") for db_id in database_ids]
+
+    class FakeGrantService:
+        async def list_database_ids_for_user(self, user_id):
+            return [2, 5]
+
+    set_request_context(RequestContext(user_id=7, org_id=11, workspace_id=13, role="analyst"))
+
+    service = DatabaseService(FakeDbRepo(), audit_service=object(), grant_service=FakeGrantService())
+    dbs = await service.get_databases(user_id=7)
+
+    assert [db.id for db in dbs] == [2, 5]
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_add_database_creates_manage_grant_for_creator():
+    class FakeDbRepo:
+        async def create(self, db):
+            db.id = 99
+            return db
+
+    class FakeGrantService:
+        def __init__(self):
+            self.calls = []
+
+        async def grant_access(self, database_id, target_user_id, access_level):
+            self.calls.append((database_id, target_user_id, access_level))
+
+    class FakeAuditService:
+        async def record_event(self, **kwargs):
+            return kwargs
+
+    set_request_context(RequestContext(user_id=7, org_id=11, workspace_id=13, role="admin"))
+
+    service = DatabaseService(
+        FakeDbRepo(),
+        audit_service=FakeAuditService(),
+        grant_service=FakeGrantService(),
+    )
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("services.database_service.validate_database_connection", lambda **kwargs: None)
+        mp.setattr("services.database_service.encrypt_password", lambda value: f"enc:{value}")
+        db = await service.add_database(
+            user_id=7,
+            data=types.SimpleNamespace(
+                host="localhost",
+                port=5432,
+                db_user="postgres",
+                db_password="pw",
+                db_name="appdb",
+            ),
+        )
+
+    assert db.id == 99
+    assert service.grant_service.calls == [(99, 7, DatabaseAccessLevel.MANAGE)]
 
 
 @pytest.mark.asyncio(loop_scope="function")

@@ -1,566 +1,605 @@
-# SpeakQL Enterprise — Frontend Design Specification v2
+# SpeakQL frontend engineering & design guide
 
-> **For AI agents executing this spec:**
-> Read every section in full before writing a single line of code.
-> Every value — color, size, font weight, border width, z-index — is a hard requirement unless the word `[OPTIONAL]` appears next to it.
-> Do not substitute. Do not improve. Do not add features not listed here.
-> When you are unsure: do less, not more. Ask before guessing.
-
----
-
-## 0. Agent quick-start checklist
-
-Complete every item before touching any component file.
-
-- [ ] Read this entire document first
-- [ ] Framework: React 18 + TypeScript + Vite
-- [ ] Styling: `globals.css` for CSS variables + Tailwind CSS v3 for layout utilities only
-- [ ] State: Zustand for UI/session state, TanStack Query v5 for server state
-- [ ] Router: React Router v6 with nested routes
-- [ ] Icons: `lucide-react` only — no heroicons, no fontawesome, nothing else
-- [ ] Fonts: IBM Plex Mono (400, 500) + IBM Plex Sans (400, 500) via Google Fonts in `index.html`
-- [ ] All colors come from CSS variables — zero hardcoded hex values in any `.tsx` file
-- [ ] Theme is controlled by `data-theme="dark"` or `data-theme="light"` on `<html>` element
-- [ ] No component file exceeds 200 lines — split ruthlessly
-- [ ] Every component has a named TypeScript interface for its props directly above the component
-- [ ] No `any` types anywhere
-- [ ] Run `npx tsc --noEmit` — zero errors before calling done
+**Version:** 1.0  
+**Audience:** Frontend engineers and AI agents building against the SpeakQL backend  
+**Source:** `explainer.md` + interactive UI mockup  
+**Status:** Active — reflects Phase 1 grant system
 
 ---
 
-## 1. Design philosophy
+## Table of contents
 
-### What this is
-
-SpeakQL is a **governed data workbench**, not a chat application.
-The SQL editor and results table are the primary elements.
-The natural language prompt is a secondary input — a fast way to generate a first draft.
-The governance layer (policy, masking, audit, risk) is always visible, never hidden in a modal.
-
-### Visual reference
-
-Bloomberg Terminal + Reuters Eikon — but modern, not retro.
-- Dense information without clutter
-- Amber gold as the single brand accent
-- Monospace typography throughout — this is a tool for people who read data
-- Two themes (dark and light) that are equal citizens — not "dark mode as afterthought"
-- No rounded pill buttons. No gradient cards. No chat bubbles. No animations except theme transition.
-
-### What this is NOT
-
-- Not a chat interface (no message bubbles, no conversation history taking up 50% of the screen)
-- Not a dashboard (no pie charts, no KPI widgets on the landing page)
-- Not a SaaS landing page (no hero sections, no feature cards)
-- Not a mobile app (desktop only, minimum viewport 1280px)
+1. [Mental model](#1-mental-model)
+2. [Permission layers in detail](#2-permission-layers-in-detail)
+3. [API reference for the frontend](#3-api-reference-for-the-frontend)
+4. [State management strategy](#4-state-management-strategy)
+5. [Component design patterns](#5-component-design-patterns)
+6. [Empty states and error messaging](#6-empty-states-and-error-messaging)
+7. [Workspace switching behaviour](#7-workspace-switching-behaviour)
+8. [Grant management UI](#8-grant-management-ui)
+9. [TypeScript types](#9-typescript-types)
+10. [Implementation checklist](#10-implementation-checklist)
 
 ---
 
-## 2. Tech stack — exact versions
+## 1. Mental model
 
+SpeakQL uses **two independent permission layers** that must both be satisfied before a user can act on a database. Neither layer alone is sufficient.
+
+```
+┌─────────────────────────────────────────┐
+│         Workspace membership role        │  → controls: route access, admin UI
+│  admin | compliance_admin | analyst | viewer │
+└───────────────────┬─────────────────────┘
+                    │ AND
+┌───────────────────▼─────────────────────┐
+│         Per-database access grant        │  → controls: visibility, actions
+│   discover | query | export | manage    │
+└─────────────────────────────────────────┘
+```
+
+### The single most important rule
+
+> The frontend must **never reconstruct grant logic locally**. Always use backend-returned data as the source of truth.
+
+This means:
+
+- Use `GET /databases` to determine which databases a user can see — do not derive visibility from role alone.
+- Use `403` responses to determine whether an action is permitted — do not pre-check client-side.
+- Treat an empty database list as a valid permission state, not a loading error.
+
+---
+
+## 2. Permission layers in detail
+
+### 2.1 Workspace membership roles
+
+| Role | Description |
+|---|---|
+| `admin` | Full workspace access. Bypasses per-database grant checks — sees all databases. |
+| `compliance_admin` | Elevated for compliance surfaces. Still subject to database grants. |
+| `analyst` | Standard data user. Subject to database grants. |
+| `viewer` | Read-only workspace presence. Subject to database grants. |
+
+Roles govern **coarse route access** (e.g. whether the admin panel is visible in the nav) and some UI exposure decisions. They do not replace database grants for data access.
+
+### 2.2 Per-database grant levels
+
+Grants are **additive upward** — each level includes everything below it.
+
+| Grant | Capabilities |
+|---|---|
+| `discover` | Inspect schema surfaces (`GET /agent/visualize-schema`) |
+| `query` | Generate SQL, execute SQL, explain SQL — includes `discover` |
+| `export` | Export query results — includes `query` |
+| `manage` | Administer the connector and edit grants — includes `export` |
+
+**Critical:** `export` is not implied by `query`. A user may have `query` but not `export`. Never assume upward.
+
+### 2.3 Admin override
+
+A user with the `admin` workspace role behaves as if they have `manage` grant on every database in the workspace. `GET /databases` returns all databases for admins. The frontend should not hardcode this assumption — it is enforced on the backend and reflected in the response.
+
+---
+
+## 3. API reference for the frontend
+
+### 3.1 Tenancy
+
+#### `GET /tenancy/memberships`
+Returns the current user's workspace memberships and their role in each.
+
+**Use for:** populating the workspace switcher, determining role for coarse UI decisions.
+
+#### `POST /tenancy/switch-workspace/{workspace_id}`
+Switches the active workspace and returns a new access token.
+
+**After this call, the frontend must:**
+1. Replace the stored access token.
+2. Clear all workspace-scoped cached queries (React Query: invalidate by workspace key prefix).
+3. Refetch: `databases`, workflow lists, catalog views, approvals, reports, audit data.
+4. Drop any selected active database that no longer appears in the new database list.
+
+---
+
+### 3.2 Database listing
+
+#### `GET /databases`
+Returns databases the current user is permitted to access.
+
+- `admin` → all workspace databases
+- non-admin → only databases with an explicit grant
+
+**This endpoint doubles as both data source and permission filter.** It is the canonical list. Do not fetch all databases and filter client-side.
+
+**React Query key:** `['databases', workspaceId]`
+
+**Empty response handling:**
+```ts
+if (databases.length === 0) {
+  // Valid state — show empty state copy, not a loading spinner or error
+}
+```
+
+---
+
+### 3.3 Connector management
+
+These require both `admin` role **and** `manage` grant on the specific database.
+
+| Endpoint | Action |
+|---|---|
+| `PUT /databases/{db_id}` | Update connector config |
+| `DELETE /databases/{db_id}` | Remove connector |
+| `POST /databases/{db_id}/rotate-mcp-key` | Rotate MCP key |
+| `POST /databases/{db_id}/refresh-catalog` | Refresh schema catalog |
+
+Even when the user has an admin shell view, these can return `403` if the `manage` grant is missing. Handle these failures explicitly — see [§6 Error messaging](#6-empty-states-and-error-messaging).
+
+---
+
+### 3.4 Query and schema surfaces
+
+| Endpoint | Required grant | Notes |
+|---|---|---|
+| `POST /agent/generate-sql` | `query` | |
+| `POST /agent/execute-sql` | `query` | |
+| `POST /agent/explain-sql` | `query` | |
+| `POST /agent/export-sql` | `export` | Not implied by `query` |
+| `GET /agent/visualize-schema` | `discover` | Available to all grant levels |
+
+---
+
+### 3.5 Grant management
+
+Phase 1: all grant management endpoints are protected by `require_admin`.
+
+| Endpoint | Action |
+|---|---|
+| `GET /databases/{db_id}/grants` | List all grants for a database |
+| `POST /databases/{db_id}/grants` | Create a grant |
+| `PATCH /databases/{db_id}/grants/{user_id}` | Update a grant |
+| `DELETE /databases/{db_id}/grants/{user_id}` | Revoke a grant |
+
+#### Create grant payload
 ```json
 {
-  "react": "^18.3.0",
-  "react-dom": "^18.3.0",
-  "typescript": "^5.4.0",
-  "vite": "^5.2.0",
-  "tailwindcss": "^3.4.0",
-  "postcss": "^8.4.0",
-  "autoprefixer": "^10.4.0",
-  "zustand": "^4.5.0",
-  " @tanstack/react-query": "^5.28.0",
-  "react-router-dom": "^6.22.0",
-  "lucide-react": "^0.378.0",
-  "axios": "^1.6.0"
+  "user_id": 42,
+  "access_level": "query"
 }
 ```
 
-Install sequence:
-
-```bash
-npm create vite@latest speakql-client -- --template react-ts
-cd speakql-client
-npm install tailwindcss postcss autoprefixer
-npx tailwindcss init -p
-npm install zustand @tanstack/react-query react-router-dom lucide-react axios
-```
-
----
-
-## 3. Project file structure — exact
-
-Do not create files outside this structure without explicit instruction.
-
-```
-speakql-client/
-├── index.html                        ← font imports live here
-├── src/
-│   ├── main.tsx                      ← Vite entry, providers, router
-│   ├── App.tsx                       ← Route tree only, no logic
-│   ├── globals.css                   ← ALL CSS variables, theme blocks, keyframes
-│   │
-│   ├── store/
-│   │   ├── themeStore.ts             ← Zustand: 'dark' | 'light', toggle fn
-│   │   ├── sessionStore.ts           ← Zustand: user, workspace, role, db
-│   │   └── workbenchStore.ts         ← Zustand: prompt, sql, status, result
-│   │
-│   ├── api/
-│   │   ├── client.ts                 ← Axios instance, auth interceptor
-│   │   ├── agent.ts                  ← /api/v1/agent/* calls
-│   │   ├── audit.ts                  ← /api/v1/audit/* calls
-│   │   ├── catalog.ts                ← /api/v1/catalog/* calls
-│   │   └── policy.ts                 ← /api/v1/policy/* calls
-│   │
-│   ├── components/
-│   │   ├── layout/
-│   │   │   ├── Shell.tsx             ← Root layout: Topbar + Rail + Outlet
-│   │   │   ├── Topbar.tsx            ← Logo, breadcrumb, nav tabs, theme toggle
-│   │   │   └── Rail.tsx              ← Left icon rail (36px wide)
-│   │   │
-│   │   ├── workbench/
-│   │   │   ├── SQLEditor.tsx         ← Syntax-highlighted SQL display + actions
-│   │   │   ├── ContextPanel.tsx      ← Session, risk, explain, audit trail
-│   │   │   ├── ResultsPanel.tsx      ← Results table spanning full width
-│   │   │   ├── PromptBar.tsx         ← Bottom NL input bar
-│   │   │   ├── RiskBar.tsx           ← Risk score visualisation (used in ContextPanel)
-│   │   │   └── ApprovalBanner.tsx    ← Shown instead of results on deny/pending
-│   │   │
-│   │   ├── audit/
-│   │   │   └── AuditTable.tsx
-│   │   │
-│   │   ├── catalog/
-│   │   │   └── CatalogCard.tsx
-│   │   │
-│   │   ├── policy/
-│   │   │   └── PolicyRuleCard.tsx
-│   │   │
-│   │   └── shared/
-│   │       ├── PanelHeader.tsx       ← Reusable panel header bar (title + tags + actions)
-│   │       ├── Tag.tsx               ← Coloured tag/badge component
-│   │       └── SectionLabel.tsx      ← Uppercase mono section label
-│   │
-│   ├── views/
-│   │   ├── WorkbenchView.tsx         ← Main 2×2 grid layout
-│   │   ├── AuditView.tsx
-│   │   ├── CatalogView.tsx
-│   │   └── PolicyView.tsx
-│   │
-│   └── data/
-│       ├── mockWorkbench.ts          ← Mock SQL, results, context
-│       ├── mockAudit.ts              ← Mock audit events
-│       ├── mockCatalog.ts            ← Mock catalog entries
-│       └── mockPolicy.ts             ← Mock policy rules
-```
-
----
-
-## 4. Font setup — `index.html`
-
-Replace the `<head>` section of `index.html` with exactly this:
-
-```html
-<!DOCTYPE html>
-<html lang="en" data-theme="dark">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SpeakQL</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet" />
-</head>
-<body>
-  <div id="root"></div>
-  <script type="module" src="/src/main.tsx"></script>
-</body>
-</html>
-```
-
-Note: `data-theme="dark"` is on `<html>`. This is where all theme CSS variable blocks are scoped.
-
----
-
-## 5. CSS variables — `src/globals.css`
-
-This is the complete file. Do not add to it. Do not remove from it.
-Every color in every component must reference one of these variables.
-
-```css
- @tailwind base;
- @tailwind components;
- @tailwind utilities;
-
- @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@400;500&display=swap');
-
-/* ─── DARK THEME ─────────────────────────────────────── */
-html[data-theme="dark"] {
-
-  /* Backgrounds — 5 levels of depth */
-  --bg0: #0C0C0A;   /* page / outermost */
-  --bg1: #111110;   /* topbar, rail, panel headers */
-  --bg2: #171715;   /* panel bodies */
-  --bg3: #1E1E1B;   /* hover states, inset areas */
-  --bg4: #252522;   /* active states, deepest inset */
-
-  /* Borders */
-  --bd:  rgba(255, 255, 255, 0.07);   /* default dividers */
-  --bd2: rgba(255, 255, 255, 0.12);   /* card edges, input borders */
-  --bd3: rgba(255, 255, 255, 0.20);   /* focused inputs */
-
-  /* Text */
-  --t1: #F0EDE6;   /* primary readable text */
-  --t2: #9A9690;   /* secondary — labels, meta */
-  --t3: #5A5750;   /* tertiary — hints, line numbers */
-  --t4: #2E2E2A;   /* quaternary — very dim, ranks */
-
-  /* Brand accent — amber gold */
-  --amber:    #C8A84B;
-  --amber-bg: rgba(200, 168, 75, 0.12);
-  --amber-bd: rgba(200, 168, 75, 0.28);
-  --amber-t:  #C8A84B;   /* amber text on dark bg */
-
-  /* Semantic — red (deny, error, critical) */
-  --red:    #C8503C;
-  --red-bg: rgba(200, 80,  60,  0.12);
-  --red-bd: rgba(200, 80,  60,  0.28);
-  --red-t:  #C8503C;
-
-  /* Semantic — green (allow, success, low risk) */
-  --green:    #5CA870;
-  --green-bg: rgba(92,  168, 112, 0.12);
-  --green-bd: rgba(92,  168, 112, 0.28);
-  --green-t:  #5CA870;
-
-  /* Semantic — blue (info, table names) */
-  --blue:    #4A80C0;
-  --blue-bg: rgba(74,  128, 192, 0.12);
-  --blue-bd: rgba(74,  128, 192, 0.28);
-  --blue-t:  #4A80C0;
-
-  /* Semantic — purple (masked, PII) */
-  --purple:    #9A60C8;
-  --purple-bg: rgba(154, 96,  200, 0.12);
-  --purple-bd: rgba(154, 96,  200, 0.28);
-  --purple-t:  #9A60C8;
-
-  /* SQL syntax highlighting */
-  --sql-keyword:  #C8503C;   /* SELECT, FROM, WHERE, JOIN... */
-  --sql-table:    #4A80C0;   /* table names */
-  --sql-string:   #5CA870;   /* 'string literals' */
-  --sql-function: #9A60C8;   /* SUM(), COUNT()... */
-  --sql-linenum:  #2E2E2A;   /* line number gutter */
-
-  /* Layout */
-  --topbar-h:  38px;
-  --rail-w:    36px;
-  --prompt-h:  46px;
-}
-
-/* ─── LIGHT THEME ────────────────────────────────────── */
-html[data-theme="light"] {
-
-  --bg0: #F5F2EC;
-  --bg1: #EDE9E0;
-  --bg2: #FDFAF5;
-  --bg3: #F0EDE5;
-  --bg4: #E8E4DA;
-
-  --bd:  rgba(0, 0, 0, 0.09);
-  --bd2: rgba(0, 0, 0, 0.16);
-  --bd3: rgba(0, 0, 0, 0.28);
-
-  --t1: #1A1A16;
-  --t2: #6A6660;
-  --t3: #A0998F;
-  --t4: #C8C4BC;
-
-  --amber:    #8A6A10;
-  --amber-bg: rgba(138, 106, 16,  0.10);
-  --amber-bd: rgba(138, 106, 16,  0.30);
-  --amber-t:  #8A6A10;
-
-  --red:    #8A3020;
-  --red-bg: rgba(138, 48,  32,  0.08);
-  --red-bd: rgba(138, 48,  32,  0.25);
-  --red-t:  #8A3020;
-
-  --green:    #2A6B3A;
-  --green-bg: rgba(42,  107, 58,  0.08);
-  --green-bd: rgba(42,  107, 58,  0.25);
-  --green-t:  #2A6B3A;
-
-  --blue:    #1A4A7A;
-  --blue-bg: rgba(26,  74,  122, 0.08);
-  --blue-bd: rgba(26,  74,  122, 0.25);
-  --blue-t:  #1A4A7A;
-
-  --purple:    #5A2A8A;
-  --purple-bg: rgba(90,  42,  138, 0.08);
-  --purple-bd: rgba(90,  42,  138, 0.25);
-  --purple-t:  #5A2A8A;
-
-  --sql-keyword:  #8A3020;
-  --sql-table:    #1A4A7A;
-  --sql-string:   #2A6B3A;
-  --sql-function: #5A2A8A;
-  --sql-linenum:  #C8C4BC;
-
-  --topbar-h:  38px;
-  --rail-w:    36px;
-  --prompt-h:  46px;
-}
-
-/* ─── GLOBAL RESETS ──────────────────────────────────── */
-*, *::before, *::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-html, body, #root {
-  height: 100%;
-  width: 100%;
-  overflow: hidden;
-}
-
-body {
-  background: var(--bg0);
-  color: var(--t1);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-}
-
-/* Theme transition — smooth but not slow */
-html {
-  transition: background 0.18s ease, color 0.18s ease;
-}
-
-/* ─── SCROLLBARS ─────────────────────────────────────── */
-::-webkit-scrollbar { width: 4px; height: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--bd2); border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: var(--bd3); }
-
-/* ─── KEYFRAMES ──────────────────────────────────────── */
- @keyframes blink {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0; }
-}
-
----
-
-## 6. Tailwind config — `tailwind.config.js`
-
-Replace the file with exactly this:
-
-```js
-/** @type {import('tailwindcss').Config} */
-export default {
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
-  theme: {
-    extend: {
-      fontFamily: {
-        mono: ['IBM Plex Mono', 'monospace'],
-        sans: ['IBM Plex Sans', 'sans-serif'],
-      },
-    },
-  },
-  plugins: [],
+#### Update grant payload
+```json
+{
+  "access_level": "manage"
 }
 ```
 
-Note: Do not extend colors in Tailwind config. All colors live in CSS variables in `globals.css`. Use inline styles like `style={{ color: 'var(--amber)' }}` or create small wrapper components for semantic colors.
-
----
-
-## 7. Typography rules — complete reference
-
-Every text element in the app must match one of these exactly.
-
-| Role | Font family | Size | Weight | Color variable | Notes |
-|---|---|---|---|---|---|
-| Logo | `IBM Plex Mono` | 13px | 500 | `--t1` | `SPEAK` in `--t1`, `QL` in `--amber` |
-| Breadcrumb | `IBM Plex Mono` | 10px | 400 | `--t3` → `--t2` → `--amber` | Dimmer → brighter → active |
-| Nav tab default | `IBM Plex Mono` | 10px | 400 | `--t3` | uppercase, tracking 0.07em |
-| Nav tab active | `IBM Plex Mono` | 10px | 400 | `--amber` | + 2px bottom border `--amber` |
-| Panel title | `IBM Plex Mono` | 9px | 500 | `--t3` | uppercase, tracking 0.10em |
-| Section label | `IBM Plex Mono` | 9px | 500 | `--t3` | uppercase, tracking 0.08em |
-| Body / cell text | `IBM Plex Mono` | 11px | 400 | `--t1` | |
-| Muted / meta | `IBM Plex Mono` | 10px | 400 | `--t2` | |
-| Hint / dim | `IBM Plex Mono` | 9px | 400 | `--t3` | |
-| Line numbers | `IBM Plex Mono` | 10px | 400 | `--sql-linenum` | |
-| SQL keywords | `IBM Plex Mono` | 11px | 500 | `--sql-keyword` | |
-| SQL table names | `IBM Plex Mono` | 11px | 400 | `--sql-table` | |
-| SQL strings | `IBM Plex Mono` | 11px | 400 | `--sql-string` | |
-| SQL functions | `IBM Plex Mono` | 11px | 400 | `--sql-function` | |
-| Table header | `IBM Plex Mono` | 9px | 500 | `--t3` | uppercase, tracking 0.08em |
-| Table cell | `IBM Plex Mono` | 10px | 400 | `--t1` | |
-| Numeric cell | `IBM Plex Mono` | 10px | 500 | `--blue-t` | right-aligned |
-| Masked cell | `IBM Plex Mono` | 10px | 400 | `--t3` | italic, content: `[ masked · PII ]` |
-| Tag label | `IBM Plex Mono` | 9px | 400 | semantic | see Tag component |
-| Prompt input | `IBM Plex Mono` | 11px | 400 | `--t1` | placeholder: `--t4` |
-| Button label | `IBM Plex Mono` | 10px | 500 | semantic | uppercase, tracking 0.06em |
-
-Rules:
-- Never use font-weight 600 or 700
-- Never use font size below 9px
-- IBM Plex Sans is used only in the prompt input placeholder and explain text — everywhere else is Mono
-- Never mix fonts within a single UI element
-
----
-
-## 8. Layout — shell and grid
-
-### 8.1 Overall shell
-
-The app occupies 100vw × 100vh with no scroll at the shell level.
-
-```
-┌──────────────────────────────── 100vw ─────────────────────────────────┐
-│  TOPBAR                                                      height: 38px│
-├──────┬─────────────────────────────────────────────────────────────────┤
-│ RAIL │  VIEW OUTLET (renders WorkbenchView, AuditView, etc.)           │
-│ 36px │  height: calc(100vh - 38px)                                     │
-│      │  overflow: hidden (each view manages its own scroll)            │
-└──────┴─────────────────────────────────────────────────────────────────┘
-```
-
-### 8.2 WorkbenchView grid
-
-The workbench is a 2×2 grid. Top row: SQL editor (left) + Context panel (right). Bottom row: Results panel spanning both columns.
-
-```
-┌─────────────────────────┬──────────────────────────┐
-│  SQL EDITOR             │  CONTEXT PANEL           │
-│  flex: 1                │  width: 340px            │
-│  min-height: 260px      │  min-height: 260px       │
-├─────────────────────────┴──────────────────────────┤
-│  RESULTS PANEL                                     │
-│  width: 100%                                       │
-│  flex: 1 (takes remaining height)                  │
-├────────────────────────────────────────────────────┤
-│  PROMPT BAR                                height: 46px│
-└────────────────────────────────────────────────────┘
-```
-
-### 8.3 Panel anatomy
-
-Every panel (SQL editor, Context, Results) follows this structure:
-
-```
-┌─ PanelHeader (30px tall) ──────────────────────────────────┐
-│  [PANEL TITLE]  [tag] [tag]  ·····  [action] [action]      │
-│  bg: --bg1, border-bottom: 0.5px solid --bd                │
-├────────────────────────────────────────────────────────────┤
-│  Panel body                                                │
-│  bg: --bg2                                                 │
-│  overflow-y: auto (each panel scrolls independently)       │
-└────────────────────────────────────────────────────────────┘
+#### Grant read shape
+```json
+{
+  "id": 7,
+  "workspace_id": 3,
+  "database_id": 12,
+  "user_id": 42,
+  "access_level": "query",
+  "granted_by": 1,
+  "created_at": "2026-04-27T01:23:45.000000",
+  "updated_at": "2026-04-27T01:23:45.000000"
+}
 ```
 
 ---
 
-## 9. Component specifications
+## 4. State management strategy
 
-### 9.1 Topbar
+### 4.1 Query key structure
 
-Height: `var(--topbar-h)` = 38px. Background: `var(--bg1)`. Border-bottom: `0.5px solid var(--bd)`.
+Organise React Query keys around workspace and database scope so workspace switching invalidates the right queries automatically.
 
-**Center zone — navigation tabs:**
-Tabs (in order): `WORKBENCH` · `AUDIT VAULT` · `CATALOG` · `POLICY` · `APPROVALS`
+```ts
+// Workspace-scoped
+['databases', workspaceId]
+['workflows', workspaceId]
+['catalog', workspaceId]
+['reports', workspaceId]
+['approvals', workspaceId]
 
-### 9.2 Rail (left icon strip)
+// Database-scoped
+['grants', workspaceId, databaseId]
+['schema', workspaceId, databaseId]
+```
 
-Width: `var(--rail-w)` = 36px. Background: `var(--bg1)`. Border-right: `0.5px solid var(--bd)`.
+### 4.2 On workspace switch
 
-### 9.3 PanelHeader (shared component)
+```ts
+async function handleWorkspaceSwitch(workspaceId: string) {
+  const { token } = await switchWorkspace(workspaceId);
+  setAccessToken(token);
 
-Height: 30px. Background: `var(--bg1)`. Border-bottom: `0.5px solid var(--bd)`.
+  // Invalidate all workspace-scoped data
+  queryClient.invalidateQueries({ queryKey: ['databases'] });
+  queryClient.invalidateQueries({ queryKey: ['workflows'] });
+  queryClient.invalidateQueries({ queryKey: ['catalog'] });
+  queryClient.invalidateQueries({ queryKey: ['reports'] });
+  queryClient.invalidateQueries({ queryKey: ['approvals'] });
 
-### 9.4 Tag (shared component)
+  // Drop stale selected database
+  const newDatabases = await queryClient.fetchQuery(['databases', workspaceId]);
+  const currentDb = getSelectedDatabase();
+  if (currentDb && !newDatabases.find(db => db.id === currentDb.id)) {
+    clearSelectedDatabase();
+  }
+}
+```
 
-Variants: `amber` | `green` | `red` | `blue` | `purple` | `neutral`
+### 4.3 Deriving capabilities from the selected database
 
-### 9.5 SQLEditor
+Do not derive capabilities from the workspace role. Derive them from the `access_level` field on the database grant returned by `GET /databases`.
 
-SQL syntax highlighting for keywords, table names, strings, and functions.
+```ts
+const GRANT_RANK: Record<AccessLevel, number> = {
+  discover: 1,
+  query:    2,
+  export:   3,
+  manage:   4,
+};
 
-### 9.6 ContextPanel
+function can(userGrant: AccessLevel, required: AccessLevel): boolean {
+  return GRANT_RANK[userGrant] >= GRANT_RANK[required];
+}
 
-Width: 340px (fixed). Sections: SESSION, RISK ANALYSIS, WHY THIS SQL, AUDIT TRAIL.
+// Usage
+const grant = selectedDatabase?.access_level;
+const canQuery  = grant ? can(grant, 'query')  : false;
+const canExport = grant ? can(grant, 'export') : false;
+const canManage = grant ? can(grant, 'manage') : false;
+```
 
-### 9.7 ResultsPanel
-
-Table spanning full width. Features masked column rendering and export actions.
-
-### 9.8 ApprovalBanner
-
-Shown on deny/pending. Styled according to risk level.
-
-### 9.9 PromptBar
-
-Height: 46px. NL input bar with blinking cursor and keyboard hints.
-
----
-
-## 10. State management
-
-Stores for `theme`, `session`, and `workbench` state using Zustand.
-
----
-
-## 11. API layer
-
-Axios client with interceptors for auth. Endpoints for `agent`, `audit`, `catalog`, and `policy`.
-
----
-
-## 12. Routing
-
-React Router with `Shell` layout and nested routes for `workbench`, `audit`, `catalog`, and `policy`.
-
----
-
-## 13. Mock data
-
-Mock data provided for v1 implementation.
-
----
-
-## 14. Other views
-
-Specifications for `AuditView`, `CatalogView`, and `PolicyView`.
+Use these flags to **disable controls proactively** in the UI. They should never be the authoritative source for server-side enforcement — that remains the backend. They exist to prevent user confusion, not to enforce security.
 
 ---
 
-## 15. Loading and error states
+## 5. Component design patterns
 
-Consistent loading (blinking dots) and error display across all panels.
+### 5.1 Sidebar database list
+
+The sidebar database picker renders the filtered list from `GET /databases`. Each item shows:
+
+- Connection status dot (green = healthy, amber = degraded)
+- Database name
+- Grant level pill (`discover` / `query` / `export` / `manage`)
+
+```tsx
+<DatabaseItem
+  db={db}
+  isActive={db.id === selectedDb?.id}
+  onClick={() => setSelectedDatabase(db)}
+>
+  <StatusDot status={db.connection_status} />
+  <span>{db.name}</span>
+  <GrantPill level={db.access_level} />
+</DatabaseItem>
+```
+
+**Grant pill colour mapping:**
+
+| Level | Background | Text colour |
+|---|---|---|
+| `discover` | `#EEEDFE` (purple-50) | `#3C3489` (purple-800) |
+| `query` | `#E1F5EE` (teal-50) | `#085041` (teal-800) |
+| `export` | `#FAEEDA` (amber-50) | `#633806` (amber-800) |
+| `manage` | `#E6F1FB` (blue-50) | `#0C447C` (blue-800) |
+
+### 5.2 Capability bar
+
+Render a persistent capability bar at the top of the Workbench editor area. It should update whenever `selectedDatabase` changes.
+
+```tsx
+<CapabilityBar database={selectedDatabase}>
+  <Capability label="schema"  active={can(grant, 'discover')} />
+  <Capability label="query"   active={can(grant, 'query')}    />
+  <Capability label="export"  active={can(grant, 'export')}   />
+  <Capability label="manage"  active={can(grant, 'manage')}   />
+</CapabilityBar>
+```
+
+Active capabilities use a filled green dot + green background pill. Inactive capabilities use a muted dot + neutral background. This gives users a persistent affordance so they are never surprised by a 403 mid-workflow.
+
+### 5.3 Action buttons
+
+Disable (not hide) action buttons when the required grant is absent. Hiding removes discoverability — the user should understand what is possible with higher grants.
+
+```tsx
+<button
+  onClick={handleRun}
+  disabled={!canQuery}
+  aria-disabled={!canQuery}
+>
+  Run query
+</button>
+
+<button
+  onClick={handleExport}
+  disabled={!canExport}
+  aria-disabled={!canExport}
+  title={!canExport ? 'You need export access for this database' : undefined}
+>
+  Export CSV
+</button>
+```
+
+### 5.4 Database picker in views other than Workbench
+
+Workflow, Reports, and Catalog all contain database selectors. All of them must source their list from `['databases', workspaceId]`. Never hardcode a full list and filter locally.
+
+```tsx
+const { data: databases = [] } = useQuery({
+  queryKey: ['databases', workspaceId],
+  queryFn: fetchDatabases,
+});
+
+// Pass the filtered list directly — no local filtering by role
+<DatabaseSelect options={databases} />
+```
 
 ---
 
-## 16. What NOT to build in v1
+## 6. Empty states and error messaging
 
-Login screens, responsive layout, real API calls (v1 uses mocks), complex animations.
+### 6.1 Empty database list
+
+When `GET /databases` returns an empty array, show a permission-aware empty state. Do not show a loading spinner, a retry button, or anything that implies backend failure.
+
+**Preferred copy:**
+> "No databases available in this workspace."
+> "You may not have access to any databases here yet. Contact your workspace admin to request access."
+
+**Avoid:**
+> "Failed to load databases." ✗  
+> "Something went wrong." ✗
+
+### 6.2 403 error mapping
+
+Map `403` responses to action-specific messages. A 403 is a valid business outcome, not an exception.
+
+| Endpoint group | User-facing message |
+|---|---|
+| `generate-sql`, `execute-sql`, `explain-sql` | "You don't have query access for this database." |
+| `export-sql` | "You don't have export access for this database." |
+| `PUT`, `DELETE`, `rotate-mcp-key`, `refresh-catalog` | "You need manage access for this database." |
+| Grant management endpoints | "Only workspace admins can manage grants." |
+
+**Error banner component:**
+
+```tsx
+function PermissionBanner({ action }: { action: 'query' | 'export' | 'manage' }) {
+  const messages = {
+    query:  "You don't have query access for this database.",
+    export: "You don't have export access for this database.",
+    manage: "You need manage access for this database.",
+  };
+  return (
+    <Banner variant="error" icon="lock">
+      {messages[action]}
+    </Banner>
+  );
+}
+```
+
+Render the banner **inline** near the action that triggered it, not in a global toast. A toast disappears — the user needs to see it in context.
+
+### 6.3 Workbench with no query access
+
+When `selectedDatabase.access_level === 'discover'`, the editor should visually communicate the restriction:
+
+- Query input field opacity reduced to 50%
+- Run query button disabled
+- Results area shows: "No query access for this database."
+- Schema tab remains fully active (discover grant covers it)
 
 ---
 
-## 17. Definition of done — v1
+## 7. Workspace switching behaviour
 
-- All views render correctly.
-- Theme toggle works.
-- Syntax highlighting works.
-- No TypeScript or console errors.
-- Visuals match specification exactly.
+Workspace switching is a **full context reset** for all database-scoped state. Treat it like a partial re-mount of the data layer.
+
+### Checklist on `POST /tenancy/switch-workspace/{id}` success
+
+1. Store the new access token returned in the response.
+2. Invalidate all workspace-scoped React Query keys (see §4.2).
+3. Compare the currently selected database against the new `GET /databases` response.
+4. If the selected database is not present in the new list, clear `selectedDatabase` in `WorkbenchView` and any other views that hold it.
+5. Refetch: databases, workflows, catalog, reports, approvals, audit log.
+6. Do not attempt to restore the previously selected database by name — names are not unique across workspaces.
+
+### Why step 4 matters
+
+`WorkbenchView` stores the active database in local state (or a URL param). After switching workspace, that reference becomes stale — the database ID from workspace A does not exist in workspace B. If not cleared, the user sees a Workbench that appears to have a database selected, but all queries return errors.
 
 ---
 
-## 18. Environment setup
+## 8. Grant management UI
 
-`.env.local` and `.env.example` configurations.
+Phase 1: this surface is only visible to `admin` users.
+
+### 8.1 Where it lives
+
+Add a grant management section to the database detail / admin surface. It should not be accessible from Workbench — keep it in the admin area to avoid cognitive overload for non-admin users.
+
+### 8.2 Design principles
+
+**Model grant level as a single select, not a stack of toggles.**
+
+The grant levels are a strict hierarchy (`discover < query < export < manage`). Representing them as independent checkboxes implies they are orthogonal — they are not. Use a `<select>` or segmented control with the four options.
+
+```tsx
+<GrantLevelSelect
+  value={grant.access_level}
+  onChange={(level) => updateGrant(grant.user_id, level)}
+  options={['discover', 'query', 'export', 'manage']}
+/>
+```
+
+**Treat create and update as "set access level."**
+
+There is no meaningful distinction between creating a grant and updating one from the admin's perspective. The UI should say "give access" or "set level", not "create grant" (jargon) or "add permission" (ambiguous).
+
+**Delete means full revocation.** Use destructive confirmation copy:
+> "Remove {name}'s access to {database}? They will no longer be able to see or query this database."
+
+### 8.3 Grant list layout
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ analytics_prod · Grants                 [+ Add user]    │
+├─────────────────────────────────────────────────────────┤
+│ Arjun Kulkarni      analyst    [query  ▾]   [Remove]   │
+│ Priya Sharma        analyst    [export ▾]   [Remove]   │
+│ Dev Iyer            viewer     [discover▾]  [Remove]   │
+└─────────────────────────────────────────────────────────┘
+```
+
+Each row renders: user display name, workspace role (for context), grant level selector, remove button. On select change, fire `PATCH /databases/{db_id}/grants/{user_id}` immediately. On remove, show confirmation then fire `DELETE`.
 
 ---
 
-*SpeakQL Enterprise UI Design Specification v2 — Bloomberg/Reuters dual-theme workbench edition.*
-*Every value in this document is intentional. Execute it literally.*
+## 9. TypeScript types
+
+Add these to `client/src/lib/types.ts`.
+
+```ts
+export type WorkspaceRole =
+  | 'admin'
+  | 'compliance_admin'
+  | 'analyst'
+  | 'viewer';
+
+export type AccessLevel =
+  | 'discover'
+  | 'query'
+  | 'export'
+  | 'manage';
+
+export interface DatabaseGrant {
+  id: number;
+  workspace_id: number;
+  database_id: number;
+  user_id: number;
+  access_level: AccessLevel;
+  granted_by: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Database {
+  id: number;
+  name: string;
+  connection_status: 'ok' | 'degraded' | 'offline';
+  access_level: AccessLevel;      // present for non-admin; for admin, synthesise 'manage'
+  workspace_id: number;
+}
+
+export interface CreateGrantPayload {
+  user_id: number;
+  access_level: AccessLevel;
+}
+
+export interface UpdateGrantPayload {
+  access_level: AccessLevel;
+}
+```
+
+### API helpers
+
+Add to `client/src/api/databases.ts` or a new `client/src/api/grants.ts`:
+
+```ts
+import type { DatabaseGrant, CreateGrantPayload, UpdateGrantPayload } from '@/lib/types';
+
+export async function listGrants(databaseId: number): Promise<DatabaseGrant[]> {
+  const res = await api.get(`/databases/${databaseId}/grants`);
+  return res.data;
+}
+
+export async function createGrant(
+  databaseId: number,
+  payload: CreateGrantPayload
+): Promise<DatabaseGrant> {
+  const res = await api.post(`/databases/${databaseId}/grants`, payload);
+  return res.data;
+}
+
+export async function updateGrant(
+  databaseId: number,
+  userId: number,
+  payload: UpdateGrantPayload
+): Promise<DatabaseGrant> {
+  const res = await api.patch(`/databases/${databaseId}/grants/${userId}`, payload);
+  return res.data;
+}
+
+export async function revokeGrant(
+  databaseId: number,
+  userId: number
+): Promise<void> {
+  await api.delete(`/databases/${databaseId}/grants/${userId}`);
+}
+```
+
+---
+
+## 10. Implementation checklist
+
+Use this as a task list when implementing or reviewing the grant-aware frontend.
+
+### Data layer
+
+- [ ] `GET /databases` is the single source of truth for database visibility — no local filtering by role
+- [ ] React Query keys are scoped to `[resource, workspaceId]`
+- [ ] Workspace switch invalidates all workspace-scoped keys and drops stale selected database
+- [ ] Grant API helpers exist in `api/databases.ts` or `api/grants.ts`
+- [ ] TypeScript types for `AccessLevel`, `DatabaseGrant`, `Database` are in `lib/types.ts`
+
+### UI components
+
+- [ ] Sidebar database list renders grant pill per item
+- [ ] Capability bar in Workbench reflects `selectedDatabase.access_level`
+- [ ] Run query button disabled (not hidden) when grant < `query`
+- [ ] Export button disabled (not hidden) when grant < `export`
+- [ ] Schema / visualize-schema surface active for `discover` grant and above
+- [ ] Database pickers in Workflow, Reports, Catalog use filtered backend list
+- [ ] No hardcoded admin-style visibility assumptions in any selector
+
+### Empty states
+
+- [ ] Empty `GET /databases` shows permission-aware copy, not an error or spinner
+- [ ] Workbench with `discover`-only grant shows restricted state, schema tab still functional
+- [ ] No database selected state is handled gracefully in all views
+
+### Error handling
+
+- [ ] `403` on `generate/execute/explain-sql` → inline "no query access" banner
+- [ ] `403` on `export-sql` → inline "no export access" banner (not the same as query 403)
+- [ ] `403` on connector admin actions → "need manage access" message
+- [ ] All 403s are treated as valid business outcomes, not exceptions
+
+### Grant management (admin only)
+
+- [ ] Grant section visible on database admin surface for `admin` role
+- [ ] Access level rendered as single select, not checkboxes
+- [ ] Create and update both map to "set access level" UX
+- [ ] Delete shows confirmation with destructive copy before firing `DELETE`
+- [ ] Grant list shows user display name, workspace role, and current level
+
+### Workspace switching
+
+- [ ] New access token stored on switch
+- [ ] All workspace-scoped queries invalidated
+- [ ] Selected database cleared if not present in new workspace
+- [ ] No attempt to restore prior database by name across workspaces
+
+---
+
+*This document was generated from `explainer.md` and the SpeakQL UI mockup. Update it whenever the backend grant model changes or new surfaces are added.*

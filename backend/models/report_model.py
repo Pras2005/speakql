@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 class Report(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     workspace_id: int = Field(foreign_key="workspace.id", index=True)
+    database_id: int = Field(foreign_key="userdatabase.id", index=True)
     saved_query_id: int = Field(foreign_key="savedquery.id", index=True)
     
     name: str = Field(index=True)

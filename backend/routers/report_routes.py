@@ -49,9 +49,26 @@ async def create_report(
     return await service.create_report(
         name=request.name,
         saved_query_id=request.saved_query_id,
+        database_id=request.database_id,
         schedule_cron=request.schedule_cron,
-        delivery_config=request.delivery_config
+        delivery_config=request.delivery_config,
+        is_enabled=request.is_enabled
     )
+
+@router.patch("/{report_id}", response_model=ReportResponse)
+async def update_report(
+    report_id: int,
+    request: ReportUpdate,
+    service: ReportService = Depends(get_report_service),
+    token_data: dict = Depends(require_analyst)
+):
+    try:
+        return await service.update_report(
+            report_id=report_id,
+            update_data=request.dict(exclude_unset=True)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.get("", response_model=List[ReportResponse])
 async def list_reports(
@@ -68,8 +85,9 @@ async def run_report_manual(
     session: AsyncSession = Depends(get_session),
     token_data: dict = Depends(require_analyst)
 ):
+    workspace_id = token_data.get("workspace_id")
     db_repo = DatabaseRepository(session)
-    user_db = await db_repo.get_by_id(request.db_id)
+    user_db = await db_repo.get_by_id(request.db_id, workspace_id=workspace_id)
     if not user_db:
         raise HTTPException(status_code=404, detail="Database not found")
         

@@ -9,6 +9,7 @@ from utils.sql_safety import validate_sql_safety, extract_tables
 from core.request_context import get_request_context
 from utils.utils import run_with_timeout
 from sqlglot import exp
+from models.tenant_model import DatabaseAccessLevel
 
 class GovernanceService:
     def __init__(
@@ -35,7 +36,8 @@ class GovernanceService:
         original_prompt: Optional[str] = None,
         agent_tools: Any = None,
         bypass_approval: bool = False,
-        sql_rationale: Optional[str] = None
+        sql_rationale: Optional[str] = None,
+        required_access_level: DatabaseAccessLevel = DatabaseAccessLevel.QUERY,
     ) -> Dict[str, Any]:
         """
         Executes a query through the full governance pipeline:
@@ -43,6 +45,22 @@ class GovernanceService:
         """
         context = get_request_context()
         workspace_id = context.workspace_id
+
+        has_access = await self.db_service.has_database_access(
+            db_id, user_id, required_access_level
+        )
+        if not has_access:
+            error_msg = f"Permission denied: {required_access_level.value} access required"
+            qh = await self.db_service.log_query(
+                db_id=db_id,
+                user_id=user_id,
+                event_type="execution",
+                prompt=original_prompt,
+                executed_sql=sql,
+                success=False,
+                error=error_msg,
+            )
+            return {"error": error_msg, "status": "denied", "query_id": qh.id}
         
         # 1. AST Validation
         safety_error = validate_sql_safety(sql)

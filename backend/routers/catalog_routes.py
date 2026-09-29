@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_session
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from auth.auth_guards import require_analyst, require_compliance
 from repositories.catalog_repository import CatalogRepository, BusinessTermRepository, MetricDefinitionRepository
 from services.catalog_service import CatalogService
-from schemas.catalog_schemas import CatalogEntryResponse, PublishTableRequest, BusinessTermCreate, BusinessTermResponse, MetricDefinitionCreate, MetricDefinitionResponse
+from schemas.catalog_schemas import CatalogEntryResponse, PublishTableRequest, BusinessTermCreate, BusinessTermResponse, MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionResponse
 
 from repositories.audit_repository import AuditRepository
 from services.audit_service import AuditService
@@ -22,7 +22,7 @@ async def get_catalog_service(session: AsyncSession = Depends(get_session)):
     
     return CatalogService(catalog_repo, glossary_repo, metric_repo, audit_service)
 
-@router.get("/entries", response_model=List[CatalogEntryResponse])
+@router.get("", response_model=List[CatalogEntryResponse])
 async def list_catalog(
     published_only: bool = True,
     search: Optional[str] = None,
@@ -69,11 +69,11 @@ async def create_metric(
 @router.patch("/metrics/{metric_id}", response_model=MetricDefinitionResponse)
 async def update_metric(
     metric_id: int,
-    updates: Dict[str, Any],
+    request: MetricDefinitionUpdate,
     service: CatalogService = Depends(get_catalog_service),
     token_data: dict = Depends(require_compliance)
 ):
-    updated = await service.update_metric(metric_id, updates)
+    updated = await service.update_metric(metric_id, request.dict(exclude_unset=True))
     if not updated:
         raise HTTPException(status_code=404, detail="Metric not found")
     return updated
