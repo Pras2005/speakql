@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from sqlalchemy import Column, JSON
 
@@ -21,8 +21,8 @@ class Report(SQLModel, table=True):
     
     is_enabled: bool = Field(default=True)
     last_ran_at: Optional[datetime] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Relationships
     saved_query: "SavedQuery" = Relationship()
@@ -34,7 +34,7 @@ class ReportRun(SQLModel, table=True):
     workspace_id: int = Field(foreign_key="workspace.id", index=True)
     
     status: str = Field(index=True) # success, failure
-    executed_at: datetime = Field(default_factory=datetime.utcnow)
+    executed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Audit reference for actual execution
     audit_event_id: Optional[int] = Field(default=None, foreign_key="auditevent.id")

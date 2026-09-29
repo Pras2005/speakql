@@ -23,7 +23,7 @@ from models.policy_model import Policy
 from models.sensitivity_model import SensitivityRule
 from models.approval_model import ApprovalStatus
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 router = APIRouter()
 
@@ -197,7 +197,7 @@ async def verify_audit_chain(
     return {
         "workspace_id": workspace_id,
         "is_valid": is_valid,
-        "timestamp": datetime.utcnow()
+        "timestamp": datetime.now(timezone.utc)
     }
 
 # --- Connector Health ---

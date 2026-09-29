@@ -3,7 +3,7 @@ from services.audit_service import AuditService
 from utils.db_connection import validate_database_connection
 from utils.encryption import decrypt_password
 from typing import Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 class HealthService:
     def __init__(self, db_repo: DatabaseRepository, audit_service: AuditService):
@@ -31,7 +31,7 @@ class HealthService:
             error_msg = str(e)
         
         # Persist status in database record
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         db.last_health_status = status
         db.last_health_check_at = now
         db.health_failure_summary = error_msg

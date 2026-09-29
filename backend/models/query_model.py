@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 
 if TYPE_CHECKING:
     from .db_model import UserDatabase
@@ -17,7 +17,7 @@ class QueryHistory(SQLModel, table=True):
     executed_sql: Optional[str] = None
     success: bool = True
     error_message: Optional[str] = None
-    executed_at: datetime = Field(default_factory=datetime.utcnow)
+    executed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     database: "UserDatabase" = Relationship(
         back_populates="history",

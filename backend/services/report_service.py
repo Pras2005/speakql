@@ -1,10 +1,13 @@
+import logging
 from typing import List, Optional, Dict, Any
 from models.report_model import Report, ReportRun
 from repositories.report_repository import ReportRepository, ReportRunRepository
 from services.workflow_service import WorkflowService
 from services.audit_service import AuditService
 from core.request_context import get_request_context, RequestContext, set_request_context
-from datetime import datetime
+from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 class ReportService:
     def __init__(
@@ -86,31 +89,33 @@ class ReportService:
         for report in reports:
             # Simple threshold: 1 hour
             if report.last_ran_at:
-                delta = datetime.utcnow() - report.last_ran_at
+                delta = datetime.now(timezone.utc) - report.last_ran_at
                 if delta.total_seconds() < 3600:
                     continue
             
             # Setup context for the report's workspace
+            # user_id=None indicates a system/scheduler-triggered execution
             ctx = RequestContext(
                 workspace_id=report.workspace_id,
-                user_id=0, # System user
+                user_id=None,
                 role="admin"
             )
             set_request_context(ctx)
-            
+
             try:
                 user_db = await db_repo.get_by_id(report.database_id)
                 if not user_db:
                     continue
-                    
+
                 from utils.agent import DatabaseAgent
                 from services.ai_service import AIService
                 ai_provider = AIService.get_provider("gemini")
                 agent = DatabaseAgent(user_db=user_db, ai_provider=ai_provider)
-                
+
                 await self.run_report(report.id, report.database_id, agent.tools)
             except Exception as e:
-                print(f"Failed to run scheduled report {report.id}: {e}")
+                logger.error("Failed to run scheduled report %d: %s", report.id, e, exc_info=True)
+
 
     async def run_report(self, report_id: int, db_id: int, agent_tools: Any) -> ReportRun:
         context = get_request_context()
@@ -165,7 +170,7 @@ class ReportService:
         )
         
         # Update report last_ran_at
-        report.last_ran_at = datetime.utcnow()
+        report.last_ran_at = datetime.now(timezone.utc)
         await self.report_repo.update(report)
         
         return saved_run

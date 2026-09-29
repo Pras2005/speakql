@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from database import engine, async_session_factory
@@ -10,6 +11,8 @@ from models.mcp_model import WorkspaceApiKey
 from repositories.tenant_repository import TenantRepository
 from services.tenant_service import TenantService
 from repositories.api_key_repository import ApiKeyRepository
+
+logger = logging.getLogger(__name__)
 
 async def run_backfill():
     async with async_session_factory() as session:
@@ -23,7 +26,7 @@ async def run_backfill():
         for user in users:
             memberships = await tenant_service.get_user_memberships(user.id)
             if not memberships:
-                print(f"Backfilling tenant context for user: {user.username}")
+                logger.info("Backfilling tenant context for user: %s", user.username)
                 org, workspace = await tenant_service.setup_default_tenant(user.id)
                 
                 # 2. Backfill existing databases for this user
@@ -33,7 +36,7 @@ async def run_backfill():
                 dbs = db_result.scalars().all()
                 for db in dbs:
                     if not db.org_id or not db.workspace_id:
-                        print(f"  Updating database: {db.db_name}")
+                        logger.info("  Updating database: %s", db.db_name)
                         db.org_id = org.id
                         db.workspace_id = workspace.id
                         session.add(db)
@@ -51,7 +54,7 @@ async def run_backfill():
 
                     # 4. Migrate legacy MCP Keys to Workspace Keys
                     if db.mcp_api_key:
-                        print(f"  Migrating MCP key for DB: {db.db_name}")
+                        logger.info("  Migrating MCP key for DB: %s", db.db_name)
                         hashed = ApiKeyRepository._hash_key(db.mcp_api_key)
                         key_exists_result = await session.execute(
                             select(WorkspaceApiKey).where(WorkspaceApiKey.hashed_key == hashed)
@@ -70,7 +73,7 @@ async def run_backfill():
                             session.add(new_key)
         
         await session.commit()
-        print("Backfill completed successfully.")
+        logger.info("Backfill completed successfully.")
 
 if __name__ == "__main__":
     asyncio.run(run_backfill())

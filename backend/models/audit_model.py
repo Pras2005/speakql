@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, JSON
 
 class AuditEvent(SQLModel, table=True):
@@ -23,4 +23,4 @@ class AuditEvent(SQLModel, table=True):
     hash: Optional[str] = Field(default=None, index=True)
     previous_hash: Optional[str] = Field(default=None, index=True)
     
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

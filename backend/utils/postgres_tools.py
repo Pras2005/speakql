@@ -146,7 +146,7 @@ class PostgreSQLTools:
                     WHERE pgn.nspname = :schema AND pgc.relname = :table AND pga.attname = :column
                 """), {'schema': schema, 'table': table, 'column': column})
                 return result.scalar()
-            except:
+            except Exception:
                 return None
 
     async def count_rows_in_table(self, table_name: str, schema: str = 'public') -> int:

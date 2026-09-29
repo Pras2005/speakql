@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, List, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 
 if TYPE_CHECKING:
     from .user_model import User
@@ -23,7 +23,7 @@ class UserDatabase(SQLModel, table=True):
     db_password_encrypted: str
     db_name: str
     mcp_api_key: Optional[str] = Field(default=None, index=True, unique=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Health status persistence
     last_health_status: Optional[str] = None

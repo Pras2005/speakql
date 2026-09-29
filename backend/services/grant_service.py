@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from core.request_context import get_request_context
@@ -46,7 +46,7 @@ class GrantService:
         if existing:
             existing.access_level = access_level
             existing.granted_by = context.user_id
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = datetime.now(timezone.utc)
             updated = await self.grant_repo.update(existing)
             await self.audit_service.record_event(
                 event_type="DATABASE_ACCESS_UPDATED",

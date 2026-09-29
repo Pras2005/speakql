@@ -3,7 +3,7 @@ from models.workflow_model import SavedQuery, SavedQueryRun, QueryComment, Saved
 from repositories.workflow_repository import SavedQueryRepository, QueryCommentRepository
 from services.governance_service import GovernanceService
 from core.request_context import get_request_context
-from datetime import datetime
+from datetime import datetime, timezone
 import sqlglot
 from sqlglot import exp
 
@@ -63,7 +63,7 @@ class WorkflowService:
             if hasattr(query, key):
                 setattr(query, key, value)
         
-        query.updated_at = datetime.utcnow()
+        query.updated_at = datetime.now(timezone.utc)
         updated = await self.query_repo.update(query)
         await self.gov_service.db_service.audit_service.record_event(
             event_type="SAVED_QUERY_UPDATED",
@@ -104,7 +104,7 @@ class WorkflowService:
         updates = {
             "status": SavedQueryStatus.APPROVED,
             "reviewed_by": reviewer_id,
-            "reviewed_at": datetime.utcnow(),
+            "reviewed_at": datetime.now(timezone.utc),
             "review_reason": reason
         }
         res = await self.update_query(query_id, updates)
@@ -120,7 +120,7 @@ class WorkflowService:
         updates = {
             "status": SavedQueryStatus.REJECTED,
             "reviewed_by": reviewer_id,
-            "reviewed_at": datetime.utcnow(),
+            "reviewed_at": datetime.now(timezone.utc),
             "review_reason": reason
         }
         res = await self.update_query(query_id, updates)
@@ -243,7 +243,7 @@ class WorkflowService:
                 "columns": [c.name for c in parsed.find_all(exp.Column)][:50]
             }
             return metadata
-        except:
+        except Exception:
             return {"error": "SQL parsing failed"}
 
     async def compute_sql_diff(self, sql_a: str, sql_b: str) -> Dict[str, Any]:
@@ -272,27 +272,19 @@ class WorkflowService:
     async def compute_result_diff(self, run_a_id: int, run_b_id: int) -> Dict[str, Any]:
         """Computes summary diff between two query runs."""
         context = get_request_context()
-        # Direct session access should also be isolated
-        from sqlmodel import select
-        res_a = await self.query_repo.session.execute(
-            select(SavedQueryRun).where(SavedQueryRun.id == run_a_id).where(SavedQueryRun.workspace_id == context.workspace_id)
-        )
-        run_a = res_a.scalar_one_or_none()
-        
-        res_b = await self.query_repo.session.execute(
-            select(SavedQueryRun).where(SavedQueryRun.id == run_b_id).where(SavedQueryRun.workspace_id == context.workspace_id)
-        )
-        run_b = res_b.scalar_one_or_none()
-        
+        run_a = await self.query_repo.get_run_by_id(run_a_id, context.workspace_id)
+        run_b = await self.query_repo.get_run_by_id(run_b_id, context.workspace_id)
+
         if not run_a or not run_b:
             return {"error": "One or both runs not found or access denied"}
-            
+
         diff = {
             "row_count_diff": (run_b.row_count or 0) - (run_a.row_count or 0),
             "executed_at_diff_seconds": (run_b.executed_at - run_a.executed_at).total_seconds(),
             "snapshot_drift": run_a.result_snapshot_ref != run_b.result_snapshot_ref
         }
         return diff
+
 
     async def add_comment(self, query_id: int, body: str) -> QueryComment:
         context = get_request_context()
@@ -343,28 +335,22 @@ class WorkflowService:
             raise ValueError("Only the author can edit this comment")
             
         comment.body = body
-        comment.updated_at = datetime.utcnow()
+        comment.updated_at = datetime.now(timezone.utc)
         return await self.comment_repo.update(comment)
 
     async def save_from_history(self, history_id: int, name: str, description: Optional[str] = None) -> SavedQuery:
         """Creates a saved query from a query history record."""
         context = get_request_context()
-        from models.query_model import QueryHistory
-        from sqlmodel import select
-        
-        result = await self.query_repo.session.execute(
-            select(QueryHistory)
-            .where(QueryHistory.id == history_id)
-            .where(QueryHistory.workspace_id == context.workspace_id)
-        )
-        history = result.scalar_one_or_none()
-        
+
+        history = await self.query_repo.get_query_history_by_id(history_id, context.workspace_id)
+
         if not history:
             raise ValueError("Query history not found or access denied")
-            
+
         return await self.save_query(
             name=name,
             sql=history.executed_sql or history.generated_sql,
             prompt=history.original_prompt,
             description=description
         )
+

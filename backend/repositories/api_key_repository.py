@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from models.mcp_model import WorkspaceApiKey
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 class ApiKeyRepository:
     def __init__(self, session: AsyncSession):
@@ -23,7 +23,7 @@ class ApiKeyRepository:
         )
         key = result.scalar_one_or_none()
         if key:
-             key.last_used_at = datetime.utcnow()
+             key.last_used_at = datetime.now(timezone.utc)
              await self.session.commit()
              await self.session.refresh(key)
         return key

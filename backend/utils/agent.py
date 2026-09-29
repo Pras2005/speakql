@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Any, Dict, List, Optional
 from abc import ABC, abstractmethod
 
@@ -8,6 +9,8 @@ from openai import OpenAI
 from utils.declarations import FUNCTION_DECLARATIONS
 from utils.postgres_tools import get_postgresql_tools
 from core.config import settings
+
+logger = logging.getLogger(__name__)
 
 class LLMProvider(ABC):
     @abstractmethod
@@ -182,7 +185,7 @@ Previous steps:
     async def _run_reasoning_step(self, user_prompt: str, steps: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         react_prompt = await self._build_react_prompt(user_prompt, steps)
         if self.debug:
-            print(f"Running ReAct step {len(steps) + 1}")
+            logger.debug("Running ReAct step %d", len(steps) + 1)
         response_text = await self.ai_provider.generate_content(react_prompt)
         return self._extract_json_payload(response_text)
 
@@ -228,6 +231,7 @@ Return a JSON object: {{"final_sql": "...", "explanation": "..."}}"""
             return None
         except Exception as e:
             if self.debug:
-                import traceback
-                traceback.print_exc()
+                logger.exception("DatabaseAgent.process_request failed for prompt: %r", prompt[:200])
+            else:
+                logger.error("DatabaseAgent.process_request failed: %s", e)
             return None

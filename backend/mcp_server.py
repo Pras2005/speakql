@@ -121,7 +121,7 @@ async def get_db_agent(
         try:
             body = await request.json()
             target_db_id = body.get("arguments", {}).get("db_id")
-        except:
+        except Exception:
             pass
             
         db_id = target_db_id or workspace_key.default_db_id

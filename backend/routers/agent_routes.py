@@ -5,7 +5,7 @@ from models.user_model import User
 from schemas.agent_schemas import GenerateSQLRequest, GenerateSQLResponse, ExecuteSQLRequest, ExecuteSQLResponse
 from schemas.governance_schemas import GovernedQueryResponse
 from utils.utils import run_with_timeout
-from utils.agent import DatabaseAgent  
+from utils.agent import DatabaseAgent
 from auth.auth_bearer import JWTBearer
 from auth.auth_guards import require_analyst
 from utils.sql_safety import validate_sql_safety
@@ -32,6 +32,7 @@ from services.governed_export_service import GovernedExportService
 from services.ai_service import AIService
 from services.catalog_service import CatalogService
 from models.tenant_model import DatabaseAccessLevel
+from core.config import settings
 
 router = APIRouter()
 
@@ -121,7 +122,7 @@ async def generate_sql(
     agent = DatabaseAgent(
         user_db=user_db,
         ai_provider=ai_provider,
-        debug=True,
+        debug=settings.DEBUG,
         semantic_context=semantic_context
     )
     sql_data = await run_with_timeout(agent.process_request, request.prompt, timeout_seconds=15)
@@ -174,7 +175,7 @@ async def execute_sql(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database not found")
 
     ai_provider = AIService.get_provider("gemini")
-    agent = DatabaseAgent(user_db=user_db, ai_provider=ai_provider, debug=True)
+    agent = DatabaseAgent(user_db=user_db, ai_provider=ai_provider, debug=settings.DEBUG)
     
     result = await gov_service.execute_governed_query(
         db_id=request.db_id,
@@ -182,7 +183,8 @@ async def execute_sql(
         sql=request.raw_sql,
         original_prompt=request.original_prompt,
         agent_tools=agent.tools,
-        sql_rationale=request.sql_rationale
+        sql_rationale=request.sql_rationale,
+        skip_access_check=True,  # Already checked above
     )
 
     if result.get("status") == "approval_required":
@@ -236,7 +238,7 @@ async def export_sql(
         raise HTTPException(status_code=404, detail="Database not found")
 
     ai_provider = AIService.get_provider("gemini")
-    agent = DatabaseAgent(user_db=user_db, ai_provider=ai_provider, debug=True)
+    agent = DatabaseAgent(user_db=user_db, ai_provider=ai_provider, debug=settings.DEBUG)
     
     result = await export_service.export_query_results(
         db_id=request.db_id,
@@ -276,7 +278,7 @@ async def visualize_schema(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database not found")
     
     ai_provider = AIService.get_provider("gemini")
-    agent = DatabaseAgent(user_db=user_db, ai_provider=ai_provider, debug=True)
+    agent = DatabaseAgent(user_db=user_db, ai_provider=ai_provider, debug=settings.DEBUG)
     return await get_db_structure_json(agent)
 
 @router.post("/explain-sql")
@@ -298,7 +300,7 @@ async def explain_sql(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database not found")
 
     ai_provider = AIService.get_provider("gemini")
-    agent = DatabaseAgent(user_db=user_db, ai_provider=ai_provider, debug=True)
+    agent = DatabaseAgent(user_db=user_db, ai_provider=ai_provider, debug=settings.DEBUG)
     explain_sql = f"EXPLAIN {request.raw_sql}"
     
     result = await gov_service.execute_governed_query(
@@ -307,7 +309,8 @@ async def explain_sql(
         sql=explain_sql,
         original_prompt=request.original_prompt,
         agent_tools=agent.tools,
-        sql_rationale=request.sql_rationale
+        sql_rationale=request.sql_rationale,
+        skip_access_check=True,  # Already checked above
     )
 
     if result.get("status") != "success":

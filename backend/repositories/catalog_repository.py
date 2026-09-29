@@ -114,3 +114,13 @@ class MetricDefinitionRepository:
             .where(MetricDefinition.workspace_id == workspace_id)
         )
         return result.scalar_one_or_none()
+
+    async def update(self, metric: MetricDefinition) -> MetricDefinition:
+        self.session.add(metric)
+        await self.session.commit()
+        await self.session.refresh(metric)
+        return metric
+
+    async def delete(self, metric: MetricDefinition) -> None:
+        await self.session.delete(metric)
+        await self.session.commit()

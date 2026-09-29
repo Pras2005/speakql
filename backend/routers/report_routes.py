@@ -65,7 +65,7 @@ async def update_report(
     try:
         return await service.update_report(
             report_id=report_id,
-            update_data=request.dict(exclude_unset=True)
+            update_data=request.model_dump(exclude_unset=True)
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

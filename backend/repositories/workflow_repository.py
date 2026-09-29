@@ -79,6 +79,14 @@ class SavedQueryRepository:
         await self.session.refresh(run)
         return run
 
+    async def get_run_by_id(self, run_id: int, workspace_id: int) -> Optional[SavedQueryRun]:
+        result = await self.session.execute(
+            select(SavedQueryRun)
+            .where(SavedQueryRun.id == run_id)
+            .where(SavedQueryRun.workspace_id == workspace_id)
+        )
+        return result.scalar_one_or_none()
+
     async def list_runs(self, query_id: int, workspace_id: int) -> List[SavedQueryRun]:
         result = await self.session.execute(
             select(SavedQueryRun)
@@ -87,6 +95,16 @@ class SavedQueryRepository:
             .order_by(desc(SavedQueryRun.executed_at))
         )
         return result.scalars().all()
+
+    async def get_query_history_by_id(self, history_id: int, workspace_id: int):
+        """Gets a query history record scoped to the workspace."""
+        from models.query_model import QueryHistory
+        result = await self.session.execute(
+            select(QueryHistory)
+            .where(QueryHistory.id == history_id)
+            .where(QueryHistory.workspace_id == workspace_id)
+        )
+        return result.scalar_one_or_none()
 
 class QueryCommentRepository:
     def __init__(self, session: AsyncSession):
