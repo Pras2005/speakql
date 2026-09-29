@@ -2,18 +2,39 @@
 
 SpeakQL is an enterprise-grade AI-powered database query interface. The backend is built with FastAPI and provides a secure, governed, and highly auditable pipeline for generating and executing SQL queries via LLMs (Large Language Models).
 
-## 🌟 Key Features
+Unlike standard "text-to-SQL" wrappers that blindly trust LLM outputs, SpeakQL is built on a **Zero-Trust Security Architecture** and an **Autonomous Agentic Workflow**.
 
-- **AI-Powered Query Generation:** Integrates with Gemini and OpenAI to translate natural language into SQL using a ReAct agent loop.
-- **Robust Governance & Security:**
-  - **AST-Based SQL Validation:** Uses `sqlglot` to parse and validate SQL safely without vulnerable string-matching (protects against SQL injection and bypassing via comments).
-  - **Policy Enforcement:** Blocks write operations, enforces row limits, restricts roles, and blocks specific keywords using deep AST inspection.
-  - **Risk & Confidence Scoring:** Automatically scores generated queries for risk (e.g., cross-schema, full table scans) and LLM confidence.
-  - **Approval Workflows:** High-risk or low-confidence queries automatically trigger approval requests before execution.
-- **Enterprise Auth & RBAC:** JWT-based authentication with strict workspace-level Role-Based Access Control (Admin, Analyst, Viewer).
-- **Tamper-Evident Audit Vault:** All actions (logins, query executions, exports, policy blocks) are cryptographically chained in a tamper-evident audit log.
-- **Dynamic Masking & Sensitivity:** Data masking applied automatically based on column-level sensitivity rules.
-- **Data Catalog & Reporting:** Integrated business glossary, metric definitions, and automated background report scheduling.
+---
+
+## 🛡️ Zero-Trust Security Architecture
+
+SpeakQL treats the LLM as an *untrusted user* and wraps it in a multi-layered security mesh:
+
+- **AST-Level SQL Firewall (`sqlglot`)**
+  Instead of using fragile regular expressions to block dangerous commands (which can be bypassed via comments or aliases), SpeakQL parses the LLM's output into an Abstract Syntax Tree (AST). It mathematically proves whether a query is a read or a write operation by analyzing the tree nodes. If a policy dictates a row limit, the backend injects the limit directly into the AST, ensuring it cannot be circumvented by malicious subqueries.
+- **Cryptographic Tamper-Evident Audit Vault**
+  Every execution, approval, and policy block is hashed (SHA-256) together with the hash of the *previous* event in a blockchain-style chain. Using PostgreSQL advisory row-locks (`SELECT ... FOR UPDATE`), the system guarantees the chain remains intact even under massive concurrent loads. Any manual tampering with the database logs instantly breaks the chain, triggering `verify_chain` alerts.
+- **Dynamic, Late-Binding Data Masking**
+  Query execution is separated from data delivery. The `MaskingService` intercepts the result set *after* execution but *before* returning it to the user. It evaluates column-level sensitivity rules and applies dynamic redaction (e.g., masking emails or hashing SSNs) strictly based on the RBAC level of the requesting user.
+- **Zero-Leakage Asynchronous Context**
+  Leverages Python's `contextvars` to maintain a strict `RequestContext` across the async pipeline, guaranteeing that multi-tenant boundaries (Org, Workspace, User) are inherently bound to the executing task without risking cross-tenant data leakage under high concurrency.
+
+---
+
+## 🧠 Autonomous Agentic Workflow
+
+SpeakQL operates as a true **Agentic ReAct (Reason + Act) Loop**, acting like a human data analyst rather than a zero-shot generator.
+
+- **Iterative Schema Exploration (Tool Calling)**
+  Instead of cramming a massive schema into a single LLM prompt, the `DatabaseAgent` starts with minimal context. It uses internal tools to search for relevant tables, inspect column types, and check data distributions *before* generating the final SQL.
+- **Self-Correction**
+  If the agent writes a query that fails, it reads the PostgreSQL error, reasons about the failure (e.g., "I used the wrong foreign key"), and rewrites the query autonomously within the loop.
+- **Confidence-Driven Human-in-the-Loop (HITL)**
+  SpeakQL dual-scores every query before execution. It evaluates **Structural Risk** (e.g., Cartesian products, missing `WHERE` clauses) and **Agent Confidence**. If a query is high-risk or confidence falls below `0.7`, the system automatically pauses execution and routes an `ApprovalRequest` ticket to a human Data Steward.
+- **Explainability as a First-Class Citizen**
+  The agent returns a rich `explainability` payload with every query, including the English rationale for table choices, the exact list of tables touched (extracted via AST), and a breakdown of which governance policies influenced the execution.
+
+---
 
 ## 🛠️ Tech Stack
 
@@ -22,6 +43,8 @@ SpeakQL is an enterprise-grade AI-powered database query interface. The backend 
 - **SQL Parser:** `sqlglot` (for safe AST manipulation and validation)
 - **AI Integration:** `google-generativeai`, `openai`
 - **Security:** `python-jose` (JWT), `bcrypt` / `argon2-cffi` (Password Hashing), `cryptography` (Fernet)
+
+---
 
 ## 🚀 Getting Started
 
@@ -94,12 +117,3 @@ backend/
 ├── services/       # Core business logic and governance pipeline
 └── utils/          # LLM Agents, AST parsers, SQL safety tools, and helpers
 ```
-
-## 🔒 Security Notes
-
-This backend has been recently hardened against several vulnerabilities:
-- **No Direct Session Access:** Services strictly use repositories to prevent session leakage.
-- **Timezone-Aware:** Fully utilizes timezone-aware `datetime.now(timezone.utc)` for reliable distributed timestamping.
-- **Safe DB Connections:** Connection pooling with pre-ping enabled to prevent stale connections under load.
-- **Race-Condition Safe Audits:** Cryptographic audit chains use PostgreSQL `FOR UPDATE` advisory locks to serialize concurrent audit events safely.
-- **Strict CORS:** Defaults to strict method and header exposure rather than wildcard allowances.
