@@ -1,59 +1,22 @@
-import { createBrowserRouter, RouterProvider } from 'react-router-dom';
-import Chat from './views/Chat';
-import LoginPage from './views/Login';
-import SignupPage from './views/Signup';
-import ProtectLayout from './layouts/ProtectLayout';
-import HomePage from './views/Home';
-import QueryHistoryPage from './views/QueryHistoryPage'; // Import the new component
-import Schemas from './views/schemas';
-const router = createBrowserRouter([
-  {
-    path: '/',
-    element: <HomePage />,
-  },
-  {
-    path: '/chat',
-    element: <ProtectLayout />, // Protect the entire /chat route
-    children: [
-      {
-        path: '', // Empty path means it will match the /chat route itself
-        element: <Chat />, // The protected Chat component
-      },
-    ],
-  },
-  {
-    path: '/schemas',
-    element: <ProtectLayout />, // Protect the entire /chat route
-    children: [
-      {
-        path: '', // Empty path means it will match the /chat route itself
-        element: <Schemas />, // The protected Chat component
-      },
-    ],
-  },
-
-  {
-    path: '/query-history',
-    element: <ProtectLayout />, // Protect this route as well
-    children: [
-      {
-        path: '',
-        element: <QueryHistoryPage />,
-      },
-    ],
-  },
-  {
-    path: '/login',
-    element: <LoginPage />,
-  },
-  {
-    path: '/signup',
-    element: <SignupPage />,
-  },
-]);
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { Shell } from './components/layout/Shell';
+import { WorkbenchView } from './views/WorkbenchView';
+import { AuditView, CatalogView, PolicyView } from './views/Placeholders';
 
 function App() {
-  return <RouterProvider router={router} />;
+  return (
+    <Router>
+      <Routes>
+        <Route element={<Shell />}>
+          <Route path="/" element={<WorkbenchView />} />
+          <Route path="/audit" element={<AuditView />} />
+          <Route path="/catalog" element={<CatalogView />} />
+          <Route path="/policy" element={<PolicyView />} />
+          <Route path="/approvals" element={<div className="p-8 text-[var(--t3)] uppercase tracking-widest">Approvals View Placeholder</div>} />
+        </Route>
+      </Routes>
+    </Router>
+  );
 }
 
 export default App;

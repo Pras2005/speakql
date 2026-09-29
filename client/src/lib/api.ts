@@ -91,6 +91,12 @@ export const apiClient = {
     return api.post<ExplainSqlResponse>('/agent/explain-sql', payload);
   },
 
+  exportSql(payload: ExecuteSqlRequest, format: string = 'csv') {
+    return api.post(`/agent/export-sql?format=${format}`, payload, {
+      responseType: 'blob',
+    });
+  },
+
   async getSchema(dbId: number): Promise<SchemaVisualization> {
     const response = await api.get<string | SchemaVisualization>(`/agent/visualize-schema?db_id=${dbId}`);
     const payload = response.data;
