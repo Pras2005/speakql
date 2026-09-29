@@ -2,7 +2,7 @@ from typing import List, Optional, Dict, Any
 from models.catalog_model import CatalogEntry, ColumnAnnotation, BusinessTerm, MetricDefinition, CatalogStatus, MetricStatus
 from repositories.catalog_repository import CatalogRepository, BusinessTermRepository, MetricDefinitionRepository
 from core.request_context import get_request_context
-from datetime import datetime
+from datetime import datetime, timezone
 
 class CatalogService:
     def __init__(
@@ -31,7 +31,7 @@ class CatalogService:
         if entry:
             entry.description = description
             entry.status = CatalogStatus.PUBLISHED
-            entry.updated_at = datetime.utcnow()
+            entry.updated_at = datetime.now(timezone.utc)
             res = await self.catalog_repo.update(entry)
         else:
             entry = CatalogEntry(
@@ -81,18 +81,16 @@ class CatalogService:
         for key, value in updates.items():
             if hasattr(metric, key):
                 setattr(metric, key, value)
-        metric.updated_at = datetime.utcnow()
-        self.catalog_repo.session.add(metric)
-        await self.catalog_repo.session.commit()
-        await self.catalog_repo.session.refresh(metric)
-        
+        metric.updated_at = datetime.now(timezone.utc)
+        updated = await self.metric_repo.update(metric)
+
         if self.audit_service:
             await self.audit_service.record_event(
                 event_type="METRIC_UPDATED",
                 user_id=context.user_id,
                 details={"metric_id": metric_id, "name": metric.name}
             )
-        return metric
+        return updated
 
     async def delete_metric(self, metric_id: int) -> bool:
         context = get_request_context()
@@ -100,9 +98,8 @@ class CatalogService:
         if not metric:
             return False
         name = metric.name
-        await self.catalog_repo.session.delete(metric)
-        await self.catalog_repo.session.commit()
-        
+        await self.metric_repo.delete(metric)
+
         if self.audit_service:
             await self.audit_service.record_event(
                 event_type="METRIC_DELETED",

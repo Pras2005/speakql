@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from sqlalchemy import Column, JSON
 
@@ -27,8 +27,8 @@ class CatalogEntry(SQLModel, table=True):
     freshness: Optional[datetime] = None
     status: CatalogStatus = Field(default=CatalogStatus.DRAFT)
     
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Relationships
     column_annotations: List["ColumnAnnotation"] = Relationship(back_populates="catalog_entry")
@@ -58,8 +58,8 @@ class BusinessTerm(SQLModel, table=True):
     certified_by: Optional[int] = Field(default=None, foreign_key="user.id")
     certified_at: Optional[datetime] = None
     
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class MetricDefinition(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -74,5 +74,5 @@ class MetricDefinition(SQLModel, table=True):
     certified_by: Optional[int] = Field(default=None, foreign_key="user.id")
     certified_at: Optional[datetime] = None
     
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

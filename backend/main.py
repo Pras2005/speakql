@@ -1,7 +1,13 @@
+import contextlib
+import asyncio
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from database import init_db
 from core.logging import setup_logging
+from core.config import settings
 from routers.agent_routes import router as agent_router
 from routers.auth_routes import router as auth_router
 from routers.database_routes import router as database_router
@@ -10,13 +16,16 @@ from routers.governance_routes import router as governance_router
 from routers.workflow_routes import router as workflow_router
 from routers.catalog_routes import router as catalog_router
 from routers.report_routes import router as report_router
-from core.config import settings
-import contextlib
+from middleware.request_context_middleware import RequestIDMiddleware
 
-# Setup context-aware logging
+# Setup context-aware structured logging before anything else
 setup_logging()
 
-import asyncio
+# Warn about insecure defaults in non-production environments, crash fast in production
+settings.validate_security()
+
+logger = logging.getLogger(__name__)
+
 
 async def report_scheduler_task():
     """Background task to run reports periodically."""
@@ -39,8 +48,8 @@ async def report_scheduler_task():
     from services.sensitivity_service import SensitivityService
     from services.masking_service import MaskingService
     from services.confidence_service import ConfidenceService
-    
-    print("Starting background report scheduler...")
+
+    logger.info("Starting background report scheduler")
     while True:
         try:
             async for session in get_session():
@@ -49,39 +58,46 @@ async def report_scheduler_task():
                 audit_repo = AuditRepository(session)
                 audit_service = AuditService(audit_repo)
                 db_service = DatabaseService(db_repo, audit_service)
-                
+
                 policy_repo = PolicyRepository(session)
                 policy_service = PolicyService(policy_repo)
-                
+
                 risk_service = RiskScoringService()
                 conf_service = ConfidenceService()
-                
+
                 app_repo = ApprovalRepository(session)
                 app_service = ApprovalService(app_repo)
-                
+
                 sens_repo = SensitivityRepository(session)
                 sens_service = SensitivityService(sens_repo)
                 mask_service = MaskingService(sens_service)
-                
-                gov_service = GovernanceService(db_service, policy_service, risk_service, app_service, mask_service, conf_service)
-                
+
+                gov_service = GovernanceService(
+                    db_service, policy_service, risk_service,
+                    app_service, mask_service, conf_service
+                )
+
                 q_repo = SavedQueryRepository(session)
                 c_repo = QueryCommentRepository(session)
                 wf_service = WorkflowService(q_repo, c_repo, gov_service)
-                
+
                 r_repo = ReportRepository(session)
                 rr_repo = ReportRunRepository(session)
                 report_service = ReportService(r_repo, rr_repo, wf_service, audit_service)
-                
+
                 # Check for enabled reports
                 await report_service.run_pending_reports(db_repo)
-                    
-                break # Only one pass per session cycle
-                
-            await asyncio.sleep(600) # Check every 10 minutes
-        except Exception as e:
-            print(f"Error in report scheduler: {e}")
+
+                break  # Only one pass per session cycle
+
+            await asyncio.sleep(600)  # Check every 10 minutes
+        except asyncio.CancelledError:
+            logger.info("Report scheduler shutting down")
+            raise
+        except Exception as exc:
+            logger.error("Error in report scheduler: %s", exc, exc_info=True)
             await asyncio.sleep(60)
+
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -89,27 +105,29 @@ async def lifespan(app: FastAPI):
     await init_db()
     # Start background scheduler
     scheduler_task = asyncio.create_task(report_scheduler_task())
+    logger.info("Application startup complete")
     yield
     scheduler_task.cancel()
     try:
         await scheduler_task
     except asyncio.CancelledError:
         pass
+    logger.info("Application shutdown complete")
 
-from middleware.request_context_middleware import RequestIDMiddleware
 
 app = FastAPI(lifespan=lifespan, title="SpeakQL Enterprise API")
 
-# Middlewares
+# Request ID middleware — must be first so all downstream code can read request_id
 app.add_middleware(RequestIDMiddleware)
 
-# CORS
+# CORS — restrict methods and headers explicitly for security
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
 )
 
 # Include Routers
@@ -122,9 +140,11 @@ app.include_router(workflow_router, prefix="/workflow", tags=["Workflow"])
 app.include_router(catalog_router, prefix="/catalog", tags=["Catalog"])
 app.include_router(report_router, prefix="/reports", tags=["Reports"])
 
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
 
 if __name__ == "__main__":
     import uvicorn

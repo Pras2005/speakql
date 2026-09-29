@@ -105,7 +105,7 @@ class DatabaseService:
         if not await self.has_database_access(db_id, user_id, DatabaseAccessLevel.MANAGE):
             return None
 
-        update_data = updates.dict(exclude_unset=True)
+        update_data = updates.model_dump(exclude_unset=True)
         
         conn_params = ["host", "port", "db_user", "db_password", "db_name"]
         if any(p in update_data for p in conn_params):

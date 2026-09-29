@@ -1,28 +1,39 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import logging
 from jose import jwt, JWTError
 import bcrypt
 from core.config import settings
 from typing import Optional, Dict, Any
+
+logger = logging.getLogger(__name__)
+
 try:
     from argon2 import PasswordHasher
     from argon2.exceptions import VerifyMismatchError, InvalidHashError
+    _ARGON2_AVAILABLE = True
 except ImportError:
     PasswordHasher = None
     VerifyMismatchError = InvalidHashError = Exception
+    _ARGON2_AVAILABLE = False
+    logger.warning(
+        "argon2-cffi is not installed; falling back to bcrypt for password hashing. "
+        "Install argon2-cffi for stronger password security."
+    )
 
-argon2_hasher = PasswordHasher() if PasswordHasher is not None else None
+argon2_hasher = PasswordHasher() if _ARGON2_AVAILABLE else None
 
 def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.ALGORITHM)
 
 def decode_token(token: str) -> Dict[str, Any]:
     return jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.ALGORITHM])
+
 
 def hash_password(password: str) -> str:
     if argon2_hasher is not None:

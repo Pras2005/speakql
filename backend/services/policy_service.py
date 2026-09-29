@@ -2,6 +2,46 @@ from repositories.policy_repository import PolicyRepository
 from models.policy_model import Policy
 from typing import List, Optional, Dict, Any, Set
 from utils.sql_safety import extract_tables
+import logging
+import sqlglot
+from sqlglot import exp
+
+logger = logging.getLogger(__name__)
+
+# Mapping of keyword string to AST node types for robust DDL detection
+_KEYWORD_TO_AST = {
+    "DROP": exp.Drop,
+    "ALTER": exp.Alter,
+    "TRUNCATE": exp.Truncate,
+    "CREATE": exp.Create,
+    "INSERT": exp.Insert,
+    "UPDATE": exp.Update,
+    "DELETE": exp.Delete,
+    "GRANT": exp.Grant,
+    "REVOKE": exp.Revoke,
+}
+
+
+def _sql_contains_keyword(sql: str, keyword: str) -> bool:
+    """
+    Checks whether a SQL statement semantically contains a given keyword operation.
+    For known DDL/DML keywords we use AST node detection to avoid false positives from
+    comments, string literals, or table names. Unknown keywords fall back to case-insensitive
+    substring search.
+    """
+    kw_upper = keyword.upper()
+    ast_type = _KEYWORD_TO_AST.get(kw_upper)
+    if ast_type is not None:
+        try:
+            expressions = sqlglot.parse(sql, read="postgres")
+            if expressions and expressions[0]:
+                return any(True for _ in expressions[0].find_all(ast_type))
+            return False
+        except Exception:
+            pass  # fall through to string check
+    # Fallback for custom/unknown keywords
+    return kw_upper in sql.upper()
+
 
 class PolicyService:
     def __init__(self, policy_repo: PolicyRepository):
@@ -22,7 +62,7 @@ class PolicyService:
             "timeout": None,
             "masking": []
         }
-        
+
         sql = context.get("sql", "")
         referenced_tables = context.get("tables")
         if referenced_tables is None and sql:
@@ -30,11 +70,11 @@ class PolicyService:
 
         for policy in policies:
             rules = policy.rules_json
-            
+
             # 1. Block Write Operations
             if rules.get("block_write") and context.get("is_write"):
                 return {
-                    "allowed": False, 
+                    "allowed": False,
                     "reason": f"Policy '{policy.name}' blocks write operations",
                     "policy_id": policy.id
                 }
@@ -47,11 +87,11 @@ class PolicyService:
                     "reason": f"Role '{context['user_role']}' is restricted by policy '{policy.name}'",
                     "policy_id": policy.id
                 }
-            
-            # 2. Blocked Keywords
+
+            # 2. Blocked Keywords — AST-aware detection
             blocked_keywords = rules.get("blocked_keywords", [])
             for kw in blocked_keywords:
-                if kw.lower() in sql.lower():
+                if _sql_contains_keyword(sql, kw):
                     return {
                         "allowed": False,
                         "reason": f"Policy '{policy.name}' blocks keyword: {kw}",

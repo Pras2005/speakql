@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from .tenant_model import MembershipRole
 
 class WorkspaceApiKey(SQLModel, table=True):
@@ -18,5 +18,5 @@ class WorkspaceApiKey(SQLModel, table=True):
     
     role: MembershipRole = Field(default=MembershipRole.ANALYST)
     is_active: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_used_at: Optional[datetime] = None

@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field, Relationship, Column, JSON
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 class SensitivityLabel(str, Enum):
@@ -33,5 +33,5 @@ class SensitivityRule(SQLModel, table=True):
     # If empty, applies to everyone. If populated, applies only to these roles.
     restricted_roles: List[str] = Field(default=[], sa_column=Column(JSON))
     
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

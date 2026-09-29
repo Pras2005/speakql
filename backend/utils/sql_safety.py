@@ -64,6 +64,6 @@ def extract_tables(sql: str, dialect: str = "postgres") -> Set[str]:
                 if table.args.get("db"):
                     table_name = f"{table.args['db'].name}.{table_name}"
                 tables.add(table_name)
-    except:
+    except Exception:
         pass
     return tables

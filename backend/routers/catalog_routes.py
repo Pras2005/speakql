@@ -73,7 +73,7 @@ async def update_metric(
     service: CatalogService = Depends(get_catalog_service),
     token_data: dict = Depends(require_compliance)
 ):
-    updated = await service.update_metric(metric_id, request.dict(exclude_unset=True))
+    updated = await service.update_metric(metric_id, request.model_dump(exclude_unset=True))
     if not updated:
         raise HTTPException(status_code=404, detail="Metric not found")
     return updated

@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from sqlalchemy import Column, JSON
 
@@ -39,8 +39,8 @@ class SavedQuery(SQLModel, table=True):
     reviewed_at: Optional[datetime] = None
     review_reason: Optional[str] = None
     
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Relationships
     runs: List["SavedQueryRun"] = Relationship(back_populates="saved_query")
@@ -52,7 +52,7 @@ class SavedQueryRun(SQLModel, table=True):
     workspace_id: int = Field(foreign_key="workspace.id", index=True)
     run_by: int = Field(foreign_key="user.id", index=True)
     
-    executed_at: datetime = Field(default_factory=datetime.utcnow)
+    executed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     row_count: Optional[int] = None
     
     # For snapshot comparison (reference to actual data or digest)
@@ -71,7 +71,7 @@ class QueryComment(SQLModel, table=True):
     
     body: str
     is_edited: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     saved_query: SavedQuery = Relationship(back_populates="comments")
