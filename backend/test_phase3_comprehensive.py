@@ -11,7 +11,7 @@ from repositories.audit_repository import AuditRepository
 from models.audit_model import AuditEvent
 from models.db_model import UserDatabase
 from models.user_model import User
-from models.tenant_model import Membership, Workspace, Organization
+from models.tenant_model import Membership, Workspace, Organization, DatabaseAccessLevel
 from core.request_context import RequestContext, set_request_context
 
 @pytest.mark.asyncio
@@ -52,6 +52,7 @@ async def test_governance_service_explainability_payload():
     agent_tools.execute_query = AsyncMock(return_value=[{"id": 1, "name": "Test"}])
     masking_service.mask_results.return_value = [{"id": 1, "name": "Test"}]
     masking_service.sensitivity_service.get_applicable_rules = AsyncMock(return_value={})
+    db_service.has_database_access = AsyncMock(return_value=True)
 
     set_request_context(RequestContext(workspace_id=1, role="admin"))
     
@@ -86,6 +87,7 @@ async def test_governance_service_low_confidence_approval_required():
     
     approval_service.request_approval = AsyncMock(return_value=MagicMock(id=123))
     db_service.audit_service.record_event = AsyncMock()
+    db_service.has_database_access = AsyncMock(return_value=True)
 
     set_request_context(RequestContext(workspace_id=1, user_id=1, role="analyst"))
     
@@ -102,6 +104,34 @@ async def test_governance_service_low_confidence_approval_required():
     assert "Low confidence" in result["error"]
     assert result["explainability"]["confidence_score"] == 0.4
     assert result["explainability"]["needs_review"] is True
+
+@pytest.mark.asyncio
+async def test_governance_service_denies_without_database_access():
+    db_service = AsyncMock()
+    db_service.has_database_access = AsyncMock(return_value=False)
+    db_service.log_query = AsyncMock(return_value=MagicMock(id=321))
+
+    gov_service = GovernanceService(
+        db_service,
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+    )
+
+    set_request_context(RequestContext(workspace_id=1, user_id=1, role="analyst"))
+    result = await gov_service.execute_governed_query(
+        db_id=8,
+        user_id=1,
+        sql="SELECT * FROM test",
+        agent_tools=MagicMock(),
+        required_access_level=DatabaseAccessLevel.QUERY,
+    )
+
+    assert result["status"] == "denied"
+    assert "query access required" in result["error"]
+    db_service.log_query.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_governed_export_audit_writes():

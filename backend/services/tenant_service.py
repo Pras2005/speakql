@@ -8,10 +8,14 @@ class TenantService:
 
     async def setup_default_tenant(self, user_id: int):
         # Phase 1 requirement: Create default org/workspace for existing/new users
-        org = Organization(name="Default Organization")
+        org = Organization(name="Default Organization", owner_user_id=user_id)
         org = await self.tenant_repo.create_org(org)
         
-        workspace = Workspace(org_id=org.id, name="Default Workspace")
+        workspace = Workspace(
+            org_id=org.id,
+            name="Default Workspace",
+            owner_user_id=user_id,
+        )
         workspace = await self.tenant_repo.create_workspace(workspace)
         
         membership = Membership(

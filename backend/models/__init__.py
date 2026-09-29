@@ -1,5 +1,11 @@
 from .user_model import User
-from .tenant_model import Organization, Workspace, Membership
+from .tenant_model import (
+    Organization,
+    Workspace,
+    Membership,
+    DatabaseAccessGrant,
+    DatabaseAccessLevel,
+)
 from .db_model import UserDatabase
 from .query_model import QueryHistory
 from .policy_model import Policy

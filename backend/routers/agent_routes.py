@@ -11,6 +11,7 @@ from auth.auth_guards import require_analyst
 from utils.sql_safety import validate_sql_safety
 from utils.visualizer import get_db_structure_json
 from repositories.database_repository import DatabaseRepository
+from repositories.database_grant_repository import DatabaseGrantRepository
 from repositories.audit_repository import AuditRepository
 from repositories.policy_repository import PolicyRepository
 from repositories.approval_repository import ApprovalRepository
@@ -18,6 +19,7 @@ from repositories.sensitivity_repository import SensitivityRepository
 from repositories.catalog_repository import CatalogRepository, BusinessTermRepository, MetricDefinitionRepository
 from services.database_service import DatabaseService
 from services.audit_service import AuditService
+from services.grant_service import GrantService
 from services.policy_service import PolicyService
 from services.governance_service import GovernanceService
 from services.risk_service import RiskScoringService
@@ -29,6 +31,7 @@ from services.export_service import ExportService
 from services.governed_export_service import GovernedExportService
 from services.ai_service import AIService
 from services.catalog_service import CatalogService
+from models.tenant_model import DatabaseAccessLevel
 
 router = APIRouter()
 
@@ -62,9 +65,11 @@ async def get_export_service():
 
 async def get_database_service(session: AsyncSession = Depends(get_session)):
     db_repo = DatabaseRepository(session)
+    grant_repo = DatabaseGrantRepository(session)
     audit_repo = AuditRepository(session)
     audit_service = AuditService(audit_repo)
-    return DatabaseService(db_repo, audit_service)
+    grant_service = GrantService(grant_repo, db_repo, audit_service)
+    return DatabaseService(db_repo, audit_service, grant_service=grant_service)
 
 async def get_catalog_service(session: AsyncSession = Depends(get_session)):
     catalog_repo = CatalogRepository(session)
@@ -98,8 +103,10 @@ async def generate_sql(
 ):
     """Generate SQL based on user's request and the database structure."""
     user_id = int(token_data['sub'])
+    can_query = await db_service.has_database_access(request.db_id, user_id, DatabaseAccessLevel.QUERY)
+    if not can_query:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Database query access required")
     user_databases = await db_service.get_databases(user_id)
-       
     user_db = next((db for db in user_databases if db.id == request.db_id), None)
     if not user_db:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database not found")
@@ -156,8 +163,12 @@ async def execute_sql(
 ):
     """Execute the provided raw SQL query with governance enforcement."""
     user_id = int(token_data['sub'])
+    can_query = await gov_service.db_service.has_database_access(
+        request.db_id, user_id, DatabaseAccessLevel.QUERY
+    )
+    if not can_query:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Database query access required")
     user_databases = await gov_service.db_service.get_databases(user_id)
-    
     user_db = next((db for db in user_databases if db.id == request.db_id), None)
     if not user_db:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database not found")
@@ -214,8 +225,12 @@ async def export_sql(
 ):
     """Execute and export SQL query results through governance pipeline."""
     user_id = int(token_data['sub'])
+    can_export = await export_service.gov_service.db_service.has_database_access(
+        request.db_id, user_id, DatabaseAccessLevel.EXPORT
+    )
+    if not can_export:
+        raise HTTPException(status_code=403, detail="Database export access required")
     user_databases = await export_service.gov_service.db_service.get_databases(user_id)
-    
     user_db = next((db for db in user_databases if db.id == request.db_id), None)
     if not user_db:
         raise HTTPException(status_code=404, detail="Database not found")
@@ -252,8 +267,10 @@ async def visualize_schema(
 ):
     """Returns the structure and sample data of all tables in the selected database."""
     user_id = int(token_data['sub'])
+    can_discover = await db_service.has_database_access(db_id, user_id, DatabaseAccessLevel.DISCOVER)
+    if not can_discover:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Database discover access required")
     user_databases = await db_service.get_databases(user_id)
-
     user_db = next((db for db in user_databases if db.id == db_id), None)
     if not user_db:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database not found")
@@ -270,8 +287,12 @@ async def explain_sql(
 ):
     """Execute EXPLAIN on the provided raw SQL query with governance enforcement."""
     user_id = int(token_data['sub'])
+    can_query = await gov_service.db_service.has_database_access(
+        request.db_id, user_id, DatabaseAccessLevel.QUERY
+    )
+    if not can_query:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Database query access required")
     user_databases = await gov_service.db_service.get_databases(user_id)
-
     user_db = next((db for db in user_databases if db.id == request.db_id), None)
     if not user_db:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database not found")

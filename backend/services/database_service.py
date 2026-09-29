@@ -3,18 +3,27 @@ from repositories.database_repository import DatabaseRepository
 from services.audit_service import AuditService
 from models.db_model import UserDatabase
 from models.query_model import QueryHistory
+from models.tenant_model import DatabaseAccessLevel
 from core.request_context import get_request_context
 from utils.db_connection import validate_database_connection
 from utils.encryption import encrypt_password, decrypt_password
 from schemas.db_schemas import UserDatabaseCreate, UserDatabaseUpdate
 from typing import List, Optional, Any
 from utils.postgres_tools import get_postgresql_tools
+from services.grant_service import GrantService
 
 class DatabaseService:
-    def __init__(self, db_repo: DatabaseRepository, audit_service: AuditService, catalog_service: Optional[Any] = None):
+    def __init__(
+        self,
+        db_repo: DatabaseRepository,
+        audit_service: AuditService,
+        catalog_service: Optional[Any] = None,
+        grant_service: Optional[GrantService] = None,
+    ):
         self.db_repo = db_repo
         self.audit_service = audit_service
         self.catalog_service = catalog_service
+        self.grant_service = grant_service
 
     async def add_database(self, user_id: int, data: UserDatabaseCreate) -> UserDatabase:
         context = get_request_context()
@@ -38,6 +47,13 @@ class DatabaseService:
             mcp_api_key=secrets.token_urlsafe(32)
         )
         db = await self.db_repo.create(user_db)
+
+        if self.grant_service:
+            await self.grant_service.grant_access(
+                database_id=db.id,
+                target_user_id=user_id,
+                access_level=DatabaseAccessLevel.MANAGE,
+            )
         
         # Log audit event
         await self.audit_service.record_event(
@@ -63,15 +79,30 @@ class DatabaseService:
         await self.catalog_service.generate_draft_catalog(db_id, tables)
 
     async def get_databases(self, user_id: int) -> List[UserDatabase]:
-        # Filter by active workspace context
         context = get_request_context()
-        return await self.db_repo.list_by_workspace(context.workspace_id)
+        if not self.grant_service:
+            return await self.db_repo.list_by_workspace(context.workspace_id)
+        granted_ids = await self.grant_service.list_database_ids_for_user(user_id)
+        return await self.db_repo.list_by_ids(context.workspace_id, granted_ids)
+
+    async def has_database_access(
+        self, db_id: int, user_id: int, required_level: DatabaseAccessLevel
+    ) -> bool:
+        context = get_request_context()
+        db = await self.db_repo.get_by_id(db_id, workspace_id=context.workspace_id)
+        if not db:
+            return False
+        if not self.grant_service:
+            return True
+        return await self.grant_service.has_access(db_id, user_id, required_level)
 
     async def update_database(self, db_id: int, user_id: int, updates: UserDatabaseUpdate) -> Optional[UserDatabase]:
         db = await self.db_repo.get_by_id(db_id)
         context = get_request_context()
         
         if not db or db.workspace_id != context.workspace_id:
+            return None
+        if not await self.has_database_access(db_id, user_id, DatabaseAccessLevel.MANAGE):
             return None
 
         update_data = updates.dict(exclude_unset=True)
@@ -101,6 +132,8 @@ class DatabaseService:
         context = get_request_context()
         if not db or db.workspace_id != context.workspace_id:
             return False
+        if not await self.has_database_access(db_id, user_id, DatabaseAccessLevel.MANAGE):
+            return False
         await self.db_repo.delete(db)
         return True
 
@@ -108,6 +141,8 @@ class DatabaseService:
         db = await self.db_repo.get_by_id(db_id)
         context = get_request_context()
         if not db or db.workspace_id != context.workspace_id:
+            return None
+        if not await self.has_database_access(db_id, user_id, DatabaseAccessLevel.MANAGE):
             return None
         db.mcp_api_key = secrets.token_urlsafe(32)
         await self.db_repo.update(db)

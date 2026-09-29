@@ -1,4 +1,5 @@
 from typing import Optional
+from core.config import settings
 from utils.agent import LLMProvider, GeminiProvider, OpenAICompatibleProvider
 
 class AIService:
@@ -6,7 +7,7 @@ class AIService:
     def get_provider(provider_type: str, model_name: Optional[str] = None) -> LLMProvider:
         provider_type = provider_type.lower()
         if provider_type == "gemini":
-            return GeminiProvider(model_name or "gemini-2.0-flash")
+            return GeminiProvider(model_name or settings.GEMINI_MODEL)
         elif provider_type in ["local", "openai"]:
             return OpenAICompatibleProvider(model_name or "qwen2.5-coder")
         else:

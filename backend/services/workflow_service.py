@@ -116,13 +116,51 @@ class WorkflowService:
             )
         return res
 
-    async def list_queries(self, include_private=True, search: Optional[str] = None) -> List[SavedQuery]:
+    async def reject_query(self, query_id: int, reviewer_id: int, reason: str) -> Optional[SavedQuery]:
+        updates = {
+            "status": SavedQueryStatus.REJECTED,
+            "reviewed_by": reviewer_id,
+            "reviewed_at": datetime.utcnow(),
+            "review_reason": reason
+        }
+        res = await self.update_query(query_id, updates)
+        if res:
+            await self.gov_service.db_service.audit_service.record_event(
+                event_type="SAVED_QUERY_REJECTED",
+                user_id=reviewer_id,
+                details={"query_id": query_id, "reason": reason}
+            )
+        return res
+
+    async def archive_query(self, query_id: int) -> Optional[SavedQuery]:
+        updates = {"status": SavedQueryStatus.ARCHIVED}
+        res = await self.update_query(query_id, updates)
+        if res:
+            context = get_request_context()
+            await self.gov_service.db_service.audit_service.record_event(
+                event_type="SAVED_QUERY_ARCHIVED",
+                user_id=context.user_id,
+                details={"query_id": query_id}
+            )
+        return res
+
+    async def list_queries(
+        self, 
+        include_private=True, 
+        search: Optional[str] = None,
+        status: Optional[SavedQueryStatus] = None,
+        visibility: Optional[SavedQueryVisibility] = None,
+        owner_id: Optional[int] = None
+    ) -> List[SavedQuery]:
         context = get_request_context()
         return await self.query_repo.list_by_workspace(
             context.workspace_id, 
             include_private=include_private,
             user_id=context.user_id,
-            search=search
+            search=search,
+            status=status,
+            visibility=visibility,
+            owner_id=owner_id
         )
 
     async def replay_query(
@@ -293,6 +331,20 @@ class WorkflowService:
     async def list_comments(self, query_id: int) -> List[QueryComment]:
         context = get_request_context()
         return await self.comment_repo.list_by_query(query_id, context.workspace_id)
+
+    async def update_comment(self, comment_id: int, body: str) -> Optional[QueryComment]:
+        context = get_request_context()
+        comment = await self.comment_repo.get_by_id(comment_id, context.workspace_id)
+        if not comment:
+            return None
+        
+        # Only author can edit? For simplicity yes
+        if comment.user_id != context.user_id:
+            raise ValueError("Only the author can edit this comment")
+            
+        comment.body = body
+        comment.updated_at = datetime.utcnow()
+        return await self.comment_repo.update(comment)
 
     async def save_from_history(self, history_id: int, name: str, description: Optional[str] = None) -> SavedQuery:
         """Creates a saved query from a query history record."""

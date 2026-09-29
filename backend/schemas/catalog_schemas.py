@@ -42,6 +42,12 @@ class MetricDefinitionCreate(BaseModel):
     sql_expression: str
     description: Optional[str] = None
 
+class MetricDefinitionUpdate(BaseModel):
+    name: Optional[str] = None
+    sql_expression: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[MetricStatus] = None
+
 class MetricDefinitionResponse(BaseModel):
     id: int
     name: str

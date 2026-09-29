@@ -22,6 +22,17 @@ class DatabaseRepository:
         )
         return result.scalars().all()
 
+    async def list_by_ids(self, workspace_id: int, database_ids: List[int]) -> List[UserDatabase]:
+        if not database_ids:
+            return []
+        result = await self.session.execute(
+            select(UserDatabase).where(
+                UserDatabase.workspace_id == workspace_id,
+                UserDatabase.id.in_(database_ids),
+            )
+        )
+        return list(result.scalars().all())
+
     async def list_by_user(self, user_id: int) -> List[UserDatabase]:
         # Legacy/Compatibility helper
         result = await self.session.execute(

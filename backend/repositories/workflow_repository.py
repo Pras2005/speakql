@@ -15,7 +15,16 @@ class SavedQueryRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list_by_workspace(self, workspace_id: int, include_private=False, user_id=None, search=None) -> List[SavedQuery]:
+    async def list_by_workspace(
+        self, 
+        workspace_id: int, 
+        include_private=False, 
+        user_id=None, 
+        search=None,
+        status: Optional[SavedQueryStatus] = None,
+        visibility: Optional[SavedQueryVisibility] = None,
+        owner_id: Optional[int] = None
+    ) -> List[SavedQuery]:
         query = select(SavedQuery).where(SavedQuery.workspace_id == workspace_id)
         
         if not include_private:
@@ -27,6 +36,15 @@ class SavedQueryRepository:
                 SavedQuery.visibility == SavedQueryVisibility.WORKSPACE_SHARED,
                 SavedQuery.created_by == user_id
             ))
+
+        if status:
+            query = query.where(SavedQuery.status == status)
+        
+        if visibility:
+            query = query.where(SavedQuery.visibility == visibility)
+            
+        if owner_id:
+            query = query.where(SavedQuery.created_by == owner_id)
         
         if search:
             from sqlalchemy import or_
@@ -100,3 +118,9 @@ class QueryCommentRepository:
     async def delete(self, comment: QueryComment):
         await self.session.delete(comment)
         await self.session.commit()
+
+    async def update(self, comment: QueryComment) -> QueryComment:
+        self.session.add(comment)
+        await self.session.commit()
+        await self.session.refresh(comment)
+        return comment

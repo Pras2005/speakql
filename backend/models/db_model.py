@@ -5,11 +5,11 @@ from datetime import datetime
 if TYPE_CHECKING:
     from .user_model import User
     from .query_model import QueryHistory
-    from .tenant_model import Workspace
+    from .tenant_model import Workspace, DatabaseAccessGrant
 
 # Explicit import for SQLModel mapper to resolve relationships during combined test runs
 from .user_model import User
-from .tenant_model import Workspace
+from .tenant_model import Workspace, DatabaseAccessGrant
 
 class UserDatabase(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -32,6 +32,7 @@ class UserDatabase(SQLModel, table=True):
 
     owner: "User" = Relationship(back_populates="databases")
     workspace: "Workspace" = Relationship(back_populates="databases")
+    access_grants: List["DatabaseAccessGrant"] = Relationship(back_populates="database")
     history: List["QueryHistory"] = Relationship(
         back_populates="database", 
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
